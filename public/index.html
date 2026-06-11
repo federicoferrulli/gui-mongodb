@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mongo Web GUI</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <!-- ===================== Modale di connessione ===================== -->
+  <div id="connect-overlay" class="overlay">
+    <div class="modal">
+      <h1>🍃 Mongo Web GUI</h1>
+      <p class="subtitle">Inserisci le credenziali di connessione</p>
+
+      <div id="saved-conns-section" class="saved-conns">
+        <div class="saved-conns-title">
+          <span>Connessioni salvate</span>
+          <span class="saved-conns-tools">
+            <button type="button" id="conn-export-btn" title="Scarica connections.ini (contiene le password in chiaro)">⤓ Esporta</button>
+            <button type="button" id="conn-import-btn" title="Importa connessioni da un file .ini">⤒ Importa</button>
+          </span>
+        </div>
+        <ul id="saved-conns"></ul>
+        <div id="saved-conns-empty" class="saved-conns-empty hidden">Nessuna connessione salvata.</div>
+        <input type="file" id="conn-import-file" accept=".ini,.txt,text/plain" class="hidden" />
+      </div>
+
+      <form id="connect-form">
+        <div id="conn-edit-banner" class="conn-edit-banner hidden">
+          Modifica di <strong id="conn-edit-name"></strong>
+          <button type="button" id="conn-edit-cancel" title="Annulla la modifica">✕</button>
+        </div>
+
+        <div class="tabs">
+          <button type="button" class="tab active" data-tab="fields">Parametri</button>
+          <button type="button" class="tab" data-tab="uri">URI completa</button>
+        </div>
+
+        <div id="tab-fields" class="tab-panel">
+          <div class="form-row">
+            <label>Host
+              <input type="text" name="host" value="localhost" autocomplete="off" />
+            </label>
+            <label class="small">Porta
+              <input type="number" name="port" value="27017" />
+            </label>
+          </div>
+          <div class="form-row">
+            <label>Username
+              <input type="text" name="username" placeholder="(vuoto se senza auth)" autocomplete="username" />
+            </label>
+          </div>
+          <div class="form-row">
+            <label>Password
+              <input type="password" name="password" autocomplete="current-password" />
+            </label>
+          </div>
+          <div class="form-row">
+            <label>Auth source
+              <input type="text" name="authSource" value="admin" />
+            </label>
+          </div>
+        </div>
+
+        <div id="tab-uri" class="tab-panel hidden">
+          <div class="form-row">
+            <label>Connection string
+              <input type="text" name="uri" placeholder="mongodb://user:pass@host:27017/?authSource=admin" autocomplete="off" />
+            </label>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <label>Salva come
+            <input type="text" name="saveAs" placeholder="(opzionale: salva la connessione con questo nome)"
+                   autocomplete="off" spellcheck="false" />
+          </label>
+        </div>
+
+        <div id="connect-error" class="error hidden"></div>
+        <div class="connect-actions">
+          <button type="button" id="conn-save-btn" class="hidden" title="Salva la connessione senza connetterti">💾 Salva</button>
+          <button type="submit" id="connect-btn" class="primary">Connetti</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ===================== Layout principale ===================== -->
+  <div id="app" class="hidden">
+    <header>
+      <span class="brand">🍃 Mongo Web GUI</span>
+      <span id="conn-info" class="conn-info"></span>
+      <span id="live-badge" class="live-badge hidden" title="Aggiornamenti in tempo reale attivi">● LIVE</span>
+      <button id="disconnect-btn" class="ghost">Disconnetti</button>
+    </header>
+
+    <div class="body">
+      <aside id="sidebar">
+        <div class="sidebar-title">
+          <span>Database</span>
+          <button id="new-db-btn" title="Nuovo database">＋</button>
+        </div>
+        <ul id="db-tree"></ul>
+      </aside>
+
+      <main>
+        <div id="placeholder" class="placeholder">
+          Seleziona una collection dalla barra laterale per visualizzare i dati.<br />
+          <span class="placeholder-hint">Tasto destro su un database per crearlo, rinominarlo o eliminarlo.</span>
+        </div>
+
+        <div id="workspace" class="hidden">
+          <div class="workspace-head">
+            <span id="breadcrumb" class="breadcrumb"></span>
+            <div class="view-tabs">
+              <button class="view-tab active" data-view="data">▤ Dati</button>
+              <button class="view-tab" data-view="details">ℹ Dettagli</button>
+              <button class="view-tab" data-view="uml">◫ UML</button>
+            </div>
+          </div>
+
+          <!-- ------------------- Vista dati ------------------- -->
+          <div id="view-data" class="view-panel">
+            <div class="toolbar">
+              <select id="query-mode" title="Modalità query">
+                <option value="find">find</option>
+                <option value="aggregate">aggregate</option>
+              </select>
+              <input id="filter-input" type="text" spellcheck="false"
+                     placeholder='Filtro, es. { "age": { "$gt": 30 } }' />
+              <input id="sort-input" type="text" spellcheck="false" class="narrow"
+                     placeholder='Sort, es. { "name": 1 }' />
+              <button id="run-btn" class="primary" title="Esegui (Invio)">▶ Esegui</button>
+              <button id="insert-btn" title="Inserisci un nuovo documento">+ Documento</button>
+              <button id="refresh-btn" title="Ricarica">⟳</button>
+            </div>
+
+            <div id="query-error" class="error hidden"></div>
+
+            <div class="grid-wrap">
+              <table id="grid">
+                <thead></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+
+            <div class="statusbar">
+              <span id="result-info"></span>
+              <span class="spacer"></span>
+              <button id="prev-btn" class="ghost">‹ Prec</button>
+              <span id="page-info"></span>
+              <button id="next-btn" class="ghost">Succ ›</button>
+              <select id="page-size">
+                <option>25</option>
+                <option selected>50</option>
+                <option>100</option>
+                <option>200</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- ------------------- Vista dettagli ------------------- -->
+          <div id="view-details" class="view-panel hidden">
+            <div class="details-wrap">
+              <section>
+                <h3>Statistiche</h3>
+                <table class="info-table kv-table" id="stats-table"><tbody></tbody></table>
+              </section>
+              <section>
+                <h3>Indici</h3>
+                <table class="info-table" id="index-table"><thead></thead><tbody></tbody></table>
+              </section>
+              <section class="full">
+                <h3>Schema rilevato <span id="schema-note" class="hint"></span></h3>
+                <table class="info-table" id="schema-table"><thead></thead><tbody></tbody></table>
+              </section>
+            </div>
+          </div>
+
+          <!-- ------------------- Vista UML ------------------- -->
+          <div id="view-uml" class="view-panel hidden">
+            <div class="uml-bar">
+              <span class="hint">
+                Associazioni dedotte dai nomi dei campi (es. <code>user_id</code> → collection
+                <code>users</code>) e dai tipi ObjectId su un campione di documenti.
+              </span>
+              <button id="uml-refresh" class="ghost">⟳ Rigenera</button>
+            </div>
+            <div id="uml-canvas" class="uml-canvas"></div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- ===================== Modale inserimento documento ===================== -->
+  <div id="insert-overlay" class="overlay hidden">
+    <div class="modal wide">
+      <h2>Nuovo documento</h2>
+      <textarea id="insert-json" rows="14" spellcheck="false">{
+
+}</textarea>
+      <div id="insert-error" class="error hidden"></div>
+      <div class="modal-actions">
+        <button id="insert-cancel" class="ghost">Annulla</button>
+        <button id="insert-save" class="primary">Inserisci</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== Modale modifica documento (riga) ===================== -->
+  <div id="editdoc-overlay" class="overlay hidden">
+    <div class="modal wide">
+      <h2>Modifica documento</h2>
+      <p id="editdoc-id" class="doc-id-line"></p>
+      <textarea id="editdoc-json" rows="16" spellcheck="false"></textarea>
+      <div id="editdoc-error" class="error hidden"></div>
+      <div class="modal-actions">
+        <button id="editdoc-cancel" class="ghost">Annulla</button>
+        <button id="editdoc-save" class="primary">Salva</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== Modale nuovo database ===================== -->
+  <div id="dbcreate-overlay" class="overlay hidden">
+    <div class="modal">
+      <h2>Nuovo database</h2>
+      <p class="subtitle">In MongoDB un database esiste solo se contiene almeno una collection.</p>
+      <div class="form-row">
+        <label>Nome database
+          <input type="text" id="dbcreate-name" spellcheck="false" autocomplete="off" />
+        </label>
+      </div>
+      <div class="form-row">
+        <label>Prima collection
+          <input type="text" id="dbcreate-coll" placeholder="collection1" spellcheck="false" autocomplete="off" />
+        </label>
+      </div>
+      <div id="dbcreate-error" class="error hidden"></div>
+      <div class="modal-actions">
+        <button id="dbcreate-cancel" class="ghost">Annulla</button>
+        <button id="dbcreate-save" class="primary">Crea</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== Menu contestuale ===================== -->
+  <ul id="context-menu" class="context-menu hidden"></ul>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

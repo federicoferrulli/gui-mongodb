@@ -1,0 +1,3 @@
+node_modules/
+# Connessioni salvate: contiene password in chiaro, non versionare.
+connections.ini
