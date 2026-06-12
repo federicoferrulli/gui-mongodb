@@ -32,9 +32,18 @@
           <button type="button" id="conn-edit-cancel" title="Annulla la modifica">✕</button>
         </div>
 
+        <div class="form-row">
+          <label>Tipo di database
+            <select name="dbType" id="conn-dbtype">
+              <option value="mongodb">🍃 MongoDB</option>
+              <option value="mysql">🐬 MySQL</option>
+            </select>
+          </label>
+        </div>
+
         <div class="tabs">
           <button type="button" class="tab active" data-tab="fields">Parametri</button>
-          <button type="button" class="tab" data-tab="uri">URI completa</button>
+          <button type="button" class="tab" data-tab="uri" id="tab-uri-btn">URI completa</button>
         </div>
 
         <div id="tab-fields" class="tab-panel">
@@ -56,9 +65,14 @@
               <input type="password" name="password" autocomplete="current-password" />
             </label>
           </div>
-          <div class="form-row">
+          <div class="form-row" id="row-authsource">
             <label>Auth source
               <input type="text" name="authSource" value="admin" />
+            </label>
+          </div>
+          <div class="form-row hidden" id="row-database">
+            <label>Database
+              <input type="text" name="database" placeholder="(opzionale: database/schema iniziale)" autocomplete="off" />
             </label>
           </div>
         </div>
@@ -182,7 +196,7 @@
           <!-- ------------------- Vista UML ------------------- -->
           <div id="view-uml" class="view-panel hidden">
             <div class="uml-bar">
-              <span class="hint">
+              <span class="hint" id="uml-hint">
                 Associazioni dedotte dai nomi dei campi (es. <code>user_id</code> → collection
                 <code>users</code>) e dai tipi ObjectId su un campione di documenti.
               </span>
@@ -228,14 +242,14 @@
   <div id="dbcreate-overlay" class="overlay hidden">
     <div class="modal">
       <h2>Nuovo database</h2>
-      <p class="subtitle">In MongoDB un database esiste solo se contiene almeno una collection.</p>
+      <p class="subtitle" id="dbcreate-subtitle">In MongoDB un database esiste solo se contiene almeno una collection.</p>
       <div class="form-row">
         <label>Nome database
           <input type="text" id="dbcreate-name" spellcheck="false" autocomplete="off" />
         </label>
       </div>
       <div class="form-row">
-        <label>Prima collection
+        <label><span id="dbcreate-coll-label">Prima collection</span>
           <input type="text" id="dbcreate-coll" placeholder="collection1" spellcheck="false" autocomplete="off" />
         </label>
       </div>

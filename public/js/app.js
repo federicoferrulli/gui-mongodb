@@ -9,6 +9,7 @@ const $ = (sel) => document.querySelector(sel);
 const state = {
   connected: false,
   connLabel: '',
+  dbType: 'mongodb',     // 'mongodb' | 'mysql' (dal server alla connessione)
   db: null,
   coll: null,
   skip: 0,
@@ -203,10 +204,28 @@ document.querySelectorAll('.tab').forEach((tab) =>
   tab.addEventListener('click', () => selectConnTab(tab.dataset.tab))
 );
 
+// Adatta il form al tipo di database scelto: MySQL non ha authSource né URI,
+// ma ha il database/schema iniziale e una porta di default diversa.
+function applyDbTypeToForm() {
+  const form = $('#connect-form');
+  const isMysql = form.elements.dbType.value === 'mysql';
+  $('#row-authsource').classList.toggle('hidden', isMysql);
+  $('#row-database').classList.toggle('hidden', !isMysql);
+  $('#tab-uri-btn').classList.toggle('hidden', isMysql);
+  if (isMysql && !$('#tab-uri').classList.contains('hidden')) selectConnTab('fields');
+  // Cambia la porta solo se è ancora quella di default dell'altro DBMS.
+  const port = form.elements.port;
+  if (isMysql && port.value === '27017') port.value = '3306';
+  if (!isMysql && port.value === '3306') port.value = '27017';
+}
+
+$('#conn-dbtype').addEventListener('change', applyDbTypeToForm);
+
 // Legge la configurazione dal form di connessione (tab attiva inclusa).
 function readConnForm() {
   const form = $('#connect-form');
-  const usingUri = !$('#tab-uri').classList.contains('hidden');
+  const isMysql = form.elements.dbType.value === 'mysql';
+  const usingUri = !isMysql && !$('#tab-uri').classList.contains('hidden');
   const cfg = usingUri
     ? { uri: form.elements.uri.value }
     : {
@@ -214,8 +233,12 @@ function readConnForm() {
         port: form.elements.port.value,
         username: form.elements.username.value,
         password: form.elements.password.value,
-        authSource: form.elements.authSource.value,
       };
+  if (!usingUri) {
+    if (isMysql) cfg.database = form.elements.database.value;
+    else cfg.authSource = form.elements.authSource.value;
+  }
+  cfg.dbType = form.elements.dbType.value;
   cfg.saveAs = form.elements.saveAs.value;
   return cfg;
 }
@@ -239,12 +262,47 @@ function doConnect(cfg) {
     }
     state.connected = true;
     state.connLabel = res.label || '';
-    $('#conn-info').textContent = state.connLabel;
+    state.dbType = res.dbType || 'mongodb';
+    $('#conn-info').textContent = `${dbTypeIcon(state.dbType)} ${state.connLabel}`;
     $('#connect-overlay').classList.add('hidden');
     $('#app').classList.remove('hidden');
+    applyDbTypeToWorkspace();
     if (cfg.saveAs) loadSavedConnections();
     renderDbTree(res.databases);
   });
+}
+
+function dbTypeIcon(dbType) {
+  return dbType === 'mysql' ? '🐬' : '🍃';
+}
+
+// Adatta etichette e suggerimenti del workspace al DBMS connesso.
+function applyDbTypeToWorkspace() {
+  const isMysql = state.dbType === 'mysql';
+  // La seconda voce del menu modalità: pipeline Mongo oppure SQL libero.
+  $('#query-mode').options[1].textContent = isMysql ? 'SQL Raw' : 'aggregate';
+  $('#uml-hint').innerHTML = isMysql
+    ? 'Relazioni dalle <b>foreign key</b> dichiarate, più quelle dedotte dai nomi delle colonne (es. <code>user_id</code> → tabella <code>users</code>).'
+    : 'Associazioni dedotte dai nomi dei campi (es. <code>user_id</code> → collection <code>users</code>) e dai tipi ObjectId su un campione di documenti.';
+  applyQueryPlaceholders();
+}
+
+// Placeholder dei campi filtro/ordinamento in base a DBMS e modalità query.
+function applyQueryPlaceholders() {
+  const isMysql = state.dbType === 'mysql';
+  const aggregate = $('#query-mode').value === 'aggregate';
+  if (isMysql) {
+    $('#filter-input').placeholder = aggregate
+      ? 'Query SQL, es. SELECT city, COUNT(*) AS n FROM users GROUP BY city'
+      : 'Clausola WHERE, es. age > 30';
+    $('#sort-input').placeholder = 'Ordinamento, es. name ASC oppure {"name":1}';
+  } else {
+    $('#filter-input').placeholder = aggregate
+      ? 'Pipeline, es. [ { "$group": { "_id": "$city", "n": { "$sum": 1 } } } ]'
+      : 'Filtro, es. { "age": { "$gt": 30 } }';
+    $('#sort-input').placeholder = 'Sort, es. { "name": 1 }';
+  }
+  $('#sort-input').classList.toggle('hidden', aggregate);
 }
 
 $('#connect-form').addEventListener('submit', (e) => {
@@ -277,7 +335,7 @@ function renderSavedConnections(connections) {
 
     const name = document.createElement('span');
     name.className = 'saved-conn-name';
-    name.textContent = conn.name;
+    name.textContent = `${dbTypeIcon(conn.dbType)} ${conn.name}`;
 
     const label = document.createElement('span');
     label.className = 'saved-conn-label';
@@ -322,15 +380,19 @@ function startEditConn(name) {
     if (!res.ok) return toast(res.error, true);
     const f = res.fields;
     const form = $('#connect-form');
-    selectConnTab(f.uri ? 'uri' : 'fields');
+    const isMysql = (f.dbType || 'mongodb') === 'mysql';
+    form.elements.dbType.value = f.dbType || 'mongodb';
+    selectConnTab(f.uri && !isMysql ? 'uri' : 'fields');
     form.elements.uri.value = f.uri || '';
     form.elements.host.value = f.host || 'localhost';
-    form.elements.port.value = f.port || '27017';
+    form.elements.port.value = f.port || (isMysql ? '3306' : '27017');
     form.elements.username.value = f.username || '';
     form.elements.password.value = '';
     form.elements.password.placeholder = res.hasPassword ? '(invariata se lasciata vuota)' : '';
     form.elements.authSource.value = f.authSource || 'admin';
+    form.elements.database.value = f.database || '';
     form.elements.saveAs.value = name;
+    applyDbTypeToForm();
     editingConn = name;
     $('#conn-edit-name').textContent = name;
     $('#conn-edit-banner').classList.remove('hidden');
@@ -344,6 +406,7 @@ function cancelEditConn() {
   const form = $('#connect-form');
   form.reset();
   form.elements.password.placeholder = '';
+  applyDbTypeToForm();
   $('#conn-edit-banner').classList.add('hidden');
   $('#conn-save-btn').classList.add('hidden');
 }
@@ -532,6 +595,7 @@ function selectCollection(dbName, collName, labelEl) {
   $('#filter-input').value = '';
   $('#sort-input').value = '';
   $('#query-mode').value = 'find';
+  applyQueryPlaceholders();
   $('#breadcrumb').textContent = `${dbName} ▸ ${collName}`;
   $('#placeholder').classList.add('hidden');
   $('#workspace').classList.remove('hidden');
@@ -565,6 +629,12 @@ function resetWorkspace() {
 }
 
 function openCreateDb() {
+  const isMysql = state.dbType === 'mysql';
+  $('#dbcreate-subtitle').textContent = isMysql
+    ? 'In MySQL la prima tabella è facoltativa (verrà creata con una colonna id auto-incrementale).'
+    : 'In MongoDB un database esiste solo se contiene almeno una collection.';
+  $('#dbcreate-coll-label').textContent = isMysql ? 'Prima tabella' : 'Prima collection';
+  $('#dbcreate-coll').placeholder = isMysql ? '(opzionale)' : 'collection1';
   $('#dbcreate-name').value = '';
   $('#dbcreate-coll').value = '';
   $('#dbcreate-error').classList.add('hidden');
@@ -707,13 +777,7 @@ for (const sel of ['#filter-input', '#sort-input']) {
   });
 }
 
-$('#query-mode').addEventListener('change', () => {
-  const aggregate = $('#query-mode').value === 'aggregate';
-  $('#filter-input').placeholder = aggregate
-    ? 'Pipeline, es. [ { "$group": { "_id": "$city", "n": { "$sum": 1 } } } ]'
-    : 'Filtro, es. { "age": { "$gt": 30 } }';
-  $('#sort-input').classList.toggle('hidden', aggregate);
-});
+$('#query-mode').addEventListener('change', applyQueryPlaceholders);
 
 /* --------------------------- Paginazione --------------------------- */
 
