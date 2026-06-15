@@ -5,6 +5,8 @@ const path = require('path');
 const http = require('http');
 const express = require('express');
 const { Server } = require('socket.io');
+const crypto = require('crypto');
+const readline = require('readline');
 const DbFactory = require('./db/DbFactory');
 const { openSshTunnel } = require('./db/SshTunnel');
 
@@ -38,6 +40,39 @@ const CONN_FIELDS = [
 // li lascia vuoti (vedi connections:get/save e mongo:connect con keepPasswordFrom).
 const SECRET_FIELDS = ['password', 'sshPassword', 'sshPassphrase'];
 
+let encryptionKey = null;
+
+function encryptSecret(text) {
+  if (!text || typeof text !== 'string') return text;
+  if (text.startsWith('ENC:')) return text; // già cifrato
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', encryptionKey, iv);
+  let encrypted = cipher.update(text, 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+  const authTag = cipher.getAuthTag().toString('hex');
+  return `ENC:${iv.toString('hex')}:${authTag}:${encrypted}`;
+}
+
+function decryptSecret(text) {
+  if (!text || typeof text !== 'string') return text;
+  if (!text.startsWith('ENC:')) return text; // non cifrato (plain text)
+  try {
+    const parts = text.split(':');
+    if (parts.length !== 4) return text;
+    const iv = Buffer.from(parts[1], 'hex');
+    const authTag = Buffer.from(parts[2], 'hex');
+    const encryptedText = parts[3];
+    const decipher = crypto.createDecipheriv('aes-256-gcm', encryptionKey, iv);
+    decipher.setAuthTag(authTag);
+    let decrypted = decipher.update(encryptedText, 'hex', 'utf8');
+    decrypted += decipher.final('utf8');
+    return decrypted;
+  } catch (e) {
+    console.error("Errore decrittazione segreto:", e.message);
+    return "";
+  }
+}
+
 function parseIni(text) {
   const sections = {};
   let current = null;
@@ -70,14 +105,26 @@ function stringifyIni(sections) {
 
 function loadConnections() {
   try {
-    return parseIni(fs.readFileSync(CONNECTIONS_FILE, 'utf8'));
+    const sections = parseIni(fs.readFileSync(CONNECTIONS_FILE, 'utf8'));
+    for (const sec of Object.values(sections)) {
+      for (const f of SECRET_FIELDS) {
+        if (sec[f]) sec[f] = decryptSecret(sec[f]);
+      }
+    }
+    return sections;
   } catch {
     return {}; // file assente o illeggibile: nessuna connessione salvata
   }
 }
 
 function saveConnections(sections) {
-  fs.writeFileSync(CONNECTIONS_FILE, stringifyIni(sections), 'utf8');
+  const toSave = JSON.parse(JSON.stringify(sections));
+  for (const sec of Object.values(toSave)) {
+    for (const f of SECRET_FIELDS) {
+      if (sec[f]) sec[f] = encryptSecret(sec[f]);
+    }
+  }
+  fs.writeFileSync(CONNECTIONS_FILE, stringifyIni(toSave), 'utf8');
 }
 
 function assertConnName(name) {
@@ -302,12 +349,18 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Esporta il file .ini completo (password incluse: serve per backup/migrazione).
+  // Esporta il file .ini completo (password incluse, ma cifrate).
   socket.on('connections:export', (_payload, cb) => {
     try {
       const conns = loadConnections();
       if (!Object.keys(conns).length) throw new Error('Nessuna connessione salvata da esportare.');
-      cb({ ok: true, ini: stringifyIni(conns) });
+      const toSave = JSON.parse(JSON.stringify(conns));
+      for (const sec of Object.values(toSave)) {
+        for (const f of SECRET_FIELDS) {
+          if (sec[f]) sec[f] = encryptSecret(sec[f]);
+        }
+      }
+      cb({ ok: true, ini: stringifyIni(toSave) });
     } catch (err) {
       cb({ ok: false, error: errMsg(err) });
     }
@@ -394,6 +447,34 @@ io.on('connection', (socket) => {
   });
 });
 
-server.listen(PORT, () => {
-  console.log(`Mongo Web GUI in ascolto su http://localhost:${PORT}`);
-});
+async function startServer() {
+  let passphrase = process.env.GUI_MONGO_PASSPHRASE;
+  
+  if (!passphrase) {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout
+    });
+    passphrase = await new Promise(resolve => {
+      rl.question('Inserisci la passphrase per cifrare/decifrare i segreti: ', (ans) => {
+        rl.close();
+        resolve(ans);
+      });
+    });
+  }
+
+  encryptionKey = crypto.createHash('sha256').update(passphrase).digest();
+  
+  // Migrazione automatica: decifra (o legge in chiaro) e risalva cifrando tutto
+  const conns = loadConnections();
+  if (Object.keys(conns).length > 0) {
+    saveConnections(conns);
+  }
+
+  const HOST = process.env.HOST || '127.0.0.1';
+  server.listen(PORT, HOST, () => {
+    console.log(`Mongo Web GUI in ascolto su http://${HOST}:${PORT}`);
+  });
+}
+
+startServer();

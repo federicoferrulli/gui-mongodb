@@ -19,23 +19,23 @@ tracciabili. Ogni issue è descritta in un file dedicato in questa cartella.
 
 | ID | Titolo | Stato | Priorità | Difficoltà |
 | :--- | :--- | :---: | :---: | :---: |
-| [SEC-01](SEC-01-cifratura-segreti-salvati.md) | Segreti in chiaro in `connections.ini` (password DB + credenziali SSH) | 🔴 Aperta | Alta | Media |
-| [SEC-02](SEC-02-autenticazione-e-binding-rete.md) | Assenza di autenticazione, binding su tutte le interfacce, query arbitrarie | 🔴 Aperta | Alta | Media |
+| [SEC-01](done/SEC-01-cifratura-segreti-salvati.md) | Segreti in chiaro in `connections.ini` (password DB + credenziali SSH) | ✅ Risolta | Alta | Media |
+| [SEC-02](done/SEC-02-autenticazione-e-binding-rete.md) | Assenza di autenticazione, binding su tutte le interfacce, query arbitrarie | ✅ Risolta | Alta | Media |
 
 ## Feature e inconsistenze
 
 | ID | Titolo | Stato | Priorità | Difficoltà |
 | :--- | :--- | :---: | :---: | :---: |
-| [FEAT-01](FEAT-01-ui-differenziata-per-dbtype.md) | UI differenziata per tipo di database | ✅ Risolta | — | — |
-| [FEAT-02](FEAT-02-live-polling-mysql.md) | Aggiornamenti live (polling) per MySQL | 🔴 Aperta | Bassa | Facile |
-| [FEAT-03](FEAT-03-rendering-tipi-dati.md) | Rendering dei tipi di dati (binari/BLOB, decimali) | 🟡 Parziale | Bassa | Media |
+| [FEAT-01](done/FEAT-01-ui-differenziata-per-dbtype.md) | UI differenziata per tipo di database | ✅ Risolta | — | — |
+| [FEAT-02](done/FEAT-02-live-polling-mysql.md) | Aggiornamenti live (polling) per MySQL | ✅ Risolta | Bassa | Facile |
+| [FEAT-03](done/FEAT-03-rendering-tipi-dati.md) | Rendering dei tipi di dati (binari/BLOB, decimali) | ✅ Risolta | Bassa | Media |
 
 ## Codice e debito tecnico
 
 | ID | Titolo | Stato | Priorità | Difficoltà |
 | :--- | :--- | :---: | :---: | :---: |
-| [TECH-01](TECH-01-modularizzazione-frontend.md) | Modularizzazione del frontend monolitico `app.js` | 🔴 Aperta | Media | Alta |
-| [TECH-02](TECH-02-pooling-connessioni-condiviso.md) | Condivisione/pooling delle connessioni tra socket | 🔴 Aperta | Bassa | Media |
+| [TECH-01](done/TECH-01-modularizzazione-frontend.md) | Modularizzazione del frontend monolitico `app.js` | ✅ Risolta | Media | Alta |
+| [TECH-02](TECH-02-pooling-connessioni-condiviso.md) | Condivisione/pooling delle connessioni tra socket | 🔴 Aperta (Sospesa) | Bassa | Media |
 
 ## Ordine consigliato
 
