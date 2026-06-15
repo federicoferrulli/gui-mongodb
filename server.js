@@ -6,6 +6,7 @@ const http = require('http');
 const express = require('express');
 const { Server } = require('socket.io');
 const DbFactory = require('./db/DbFactory');
+const { openSshTunnel } = require('./db/SshTunnel');
 
 const PORT = process.env.PORT || 3030;
 
@@ -28,7 +29,14 @@ function errMsg(err) {
  * ------------------------------------------------------------------------- */
 
 const CONNECTIONS_FILE = path.join(__dirname, 'connections.ini');
-const CONN_FIELDS = ['dbType', 'uri', 'host', 'port', 'username', 'password', 'authSource', 'database'];
+const CONN_FIELDS = [
+  'dbType', 'uri', 'host', 'port', 'username', 'password', 'authSource', 'database',
+  // Tunnel SSH (ortogonale al dbType): 'ssh' = "true" per abilitarlo.
+  'ssh', 'sshHost', 'sshPort', 'sshUser', 'sshPassword', 'sshKeyFile', 'sshPassphrase',
+];
+// Campi segreti: mai rimandati al browser, riusati dal valore salvato se il form
+// li lascia vuoti (vedi connections:get/save e mongo:connect con keepPasswordFrom).
+const SECRET_FIELDS = ['password', 'sshPassword', 'sshPassphrase'];
 
 function parseIni(text) {
   const sections = {};
@@ -92,11 +100,20 @@ function connDbType(cfg) {
   return String(cfg.dbType || 'mongodb').trim().toLowerCase();
 }
 
+function sshEnabled(cfg) {
+  return String(cfg.ssh || '').trim().toLowerCase() === 'true';
+}
+
 // Etichetta mostrata in UI: eventuali credenziali nella URI vengono mascherate.
 function connLabel(cfg) {
-  if (cfg.uri && cfg.uri.trim()) return cfg.uri.trim().replace(/\/\/[^@]+@/, '//***@');
-  const defaultPort = connDbType(cfg) === 'mysql' ? 3306 : 27017;
-  return `${(cfg.host || 'localhost').trim()}:${String(cfg.port || defaultPort).trim()}`;
+  let base;
+  if (cfg.uri && cfg.uri.trim()) {
+    base = cfg.uri.trim().replace(/\/\/[^@]+@/, '//***@');
+  } else {
+    const defaultPort = connDbType(cfg) === 'mysql' ? 3306 : 27017;
+    base = `${(cfg.host || 'localhost').trim()}:${String(cfg.port || defaultPort).trim()}`;
+  }
+  return sshEnabled(cfg) ? `${base} (via SSH)` : base;
 }
 
 /* ---------------------------------------------------------------------------
@@ -106,12 +123,20 @@ function connLabel(cfg) {
 io.on('connection', (socket) => {
   /** @type {import('./db/DbStrategy')|null} */
   let strategy = null;
+  /** @type {{ close: () => void }|null} */
+  let tunnel = null;
 
   async function closeStrategy() {
     if (strategy) {
       const s = strategy;
       strategy = null;
       await s.disconnect().catch(() => {});
+    }
+    // Il tunnel va chiuso dopo la strategia, che lo usa per il traffico DB.
+    if (tunnel) {
+      const t = tunnel;
+      tunnel = null;
+      try { t.close(); } catch { /* ignora */ }
     }
   }
 
@@ -150,16 +175,41 @@ io.on('connection', (socket) => {
         if (!saved) throw new Error(`Connessione salvata "${cfg.saved}" non trovata.`);
         effective = saved;
       }
-      // cfg.keepPasswordFrom = nome di una connessione salvata da cui riusare la
-      // password quando il form di modifica la lascia vuota (non viene mai
-      // rimandata al browser, quindi il client non può reinviarla).
-      if (!effective.password && cfg.keepPasswordFrom) {
+      // cfg.keepPasswordFrom = nome di una connessione salvata da cui riusare i
+      // segreti (password DB e credenziali SSH) quando il form di modifica li
+      // lascia vuoti (non vengono mai rimandati al browser, quindi il client
+      // non può reinviarli).
+      if (cfg.keepPasswordFrom) {
         const prev = loadConnections()[cfg.keepPasswordFrom];
-        if (prev && prev.password) effective = { ...effective, password: prev.password };
+        if (prev) {
+          const merged = { ...effective };
+          for (const f of SECRET_FIELDS) {
+            if (!merged[f] && prev[f]) merged[f] = prev[f];
+          }
+          effective = merged;
+        }
       }
       const dbType = connDbType(effective);
+      // Tunnel SSH (solo in modalità "Parametri"): la strategia si connette al
+      // capo locale del tunnel anziché direttamente all'host del database.
+      let connectCfg = effective;
+      if (sshEnabled(effective)) {
+        if (effective.uri && effective.uri.trim()) {
+          throw new Error('Il tunnel SSH è disponibile solo in modalità "Parametri", non con URI completa.');
+        }
+        const defaultPort = dbType === 'mysql' ? 3306 : 27017;
+        const target = {
+          host: (effective.host || 'localhost').trim(),
+          port: parseInt(effective.port, 10) || defaultPort,
+        };
+        tunnel = await openSshTunnel(effective, target);
+        connectCfg = { ...effective, host: tunnel.host, port: String(tunnel.port) };
+        // Per MongoDB dietro tunnel: evita la topology discovery verso host del
+        // replica set non raggiungibili attraverso il tunnel.
+        if (dbType === 'mongodb') connectCfg.directConnection = true;
+      }
       const newStrategy = DbFactory.getStrategy(dbType);
-      await newStrategy.connect(effective);
+      await newStrategy.connect(connectCfg);
       strategy = newStrategy;
       // cfg.saveAs = salva (o aggiorna) la connessione, solo se funzionante.
       const saveAs = String(cfg.saveAs || '').trim();
@@ -217,8 +267,11 @@ io.on('connection', (socket) => {
     try {
       const conn = loadConnections()[name];
       if (!conn) throw new Error(`Connessione salvata "${name}" non trovata.`);
-      const { password, ...fields } = conn;
-      cb({ ok: true, fields, hasPassword: password != null && password !== '' });
+      const fields = { ...conn };
+      const has = (f) => conn[f] != null && conn[f] !== '';
+      const flags = { hasPassword: has('password'), hasSshPassword: has('sshPassword'), hasSshPassphrase: has('sshPassphrase') };
+      for (const f of SECRET_FIELDS) delete fields[f];
+      cb({ ok: true, fields, ...flags });
     } catch (err) {
       cb({ ok: false, error: errMsg(err) });
     }
@@ -235,7 +288,11 @@ io.on('connection', (socket) => {
       const previous = oldName ? conns[oldName] : conns[name];
       if (oldName && !previous) throw new Error(`Connessione salvata "${oldName}" non trovata.`);
       const next = sanitizeConnCfg(cfg || {});
-      if (!next.password && previous && previous.password) next.password = previous.password;
+      if (previous) {
+        for (const f of SECRET_FIELDS) {
+          if (!next[f] && previous[f]) next[f] = previous[f];
+        }
+      }
       if (oldName && oldName !== name) delete conns[oldName];
       conns[name] = next;
       saveConnections(conns);

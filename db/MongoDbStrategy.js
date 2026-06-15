@@ -25,6 +25,9 @@ function buildUri(cfg) {
   }
   const params = new URLSearchParams();
   if (cfg.username) params.set('authSource', cfg.authSource || 'admin');
+  // Connessione diretta a un singolo nodo (es. dietro tunnel SSH): evita la
+  // topology discovery verso host del replica set non raggiungibili.
+  if (cfg.directConnection) params.set('directConnection', 'true');
   const qs = params.toString();
   return `mongodb://${auth}${host}:${port}/${qs ? '?' + qs : ''}`;
 }

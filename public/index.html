@@ -86,6 +86,44 @@
         </div>
 
         <div class="form-row">
+          <label class="checkbox-label">
+            <input type="checkbox" name="ssh" id="conn-ssh-toggle" />
+            Connessione tramite tunnel SSH
+          </label>
+        </div>
+
+        <div id="ssh-fields" class="ssh-fields hidden">
+          <div class="form-row">
+            <label>Host SSH
+              <input type="text" name="sshHost" placeholder="es. bastion.example.com" autocomplete="off" />
+            </label>
+            <label class="small">Porta SSH
+              <input type="number" name="sshPort" value="22" />
+            </label>
+          </div>
+          <div class="form-row">
+            <label>Utente SSH
+              <input type="text" name="sshUser" autocomplete="off" />
+            </label>
+          </div>
+          <div class="form-row">
+            <label>Password SSH
+              <input type="password" name="sshPassword" placeholder="(vuoto se usi una chiave)" autocomplete="off" />
+            </label>
+          </div>
+          <div class="form-row">
+            <label>Chiave privata (percorso file)
+              <input type="text" name="sshKeyFile" placeholder="es. C:\Users\Keus\.ssh\id_rsa" autocomplete="off" />
+            </label>
+          </div>
+          <div class="form-row">
+            <label>Passphrase chiave
+              <input type="password" name="sshPassphrase" placeholder="(se la chiave è protetta)" autocomplete="off" />
+            </label>
+          </div>
+        </div>
+
+        <div class="form-row">
           <label>Salva come
             <input type="text" name="saveAs" placeholder="(opzionale: salva la connessione con questo nome)"
                    autocomplete="off" spellcheck="false" />

@@ -440,7 +440,16 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 #collcreate-addcol { margin-top: 8px; }
 
 /* Label con checkbox affiancata (modali colonna e indice) */
-.form-row label.checkbox-label { flex-direction: row; align-items: center; gap: 8px; }
+.form-row label.checkbox-label { flex-direction: row; align-items: center; gap: 8px; cursor: pointer; }
+
+/* Sezione del tunnel SSH nel form di connessione */
+.ssh-fields {
+  margin: 0 0 12px;
+  padding: 12px 12px 0;
+  border-left: 2px solid var(--accent);
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 0 4px 4px 0;
+}
 
 /* Modulo di inserimento guidato dallo schema */
 .insert-form-wrap { max-height: 50vh; overflow-y: auto; }

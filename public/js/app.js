@@ -211,7 +211,8 @@ function applyDbTypeToForm() {
   const isMysql = form.elements.dbType.value === 'mysql';
   $('#row-authsource').classList.toggle('hidden', isMysql);
   $('#row-database').classList.toggle('hidden', !isMysql);
-  $('#tab-uri-btn').classList.toggle('hidden', isMysql);
+  // L'URI completa non è disponibile per MySQL né col tunnel SSH attivo.
+  $('#tab-uri-btn').classList.toggle('hidden', isMysql || form.elements.ssh.checked);
   if (isMysql && !$('#tab-uri').classList.contains('hidden')) selectConnTab('fields');
   // Cambia la porta solo se è ancora quella di default dell'altro DBMS.
   const port = form.elements.port;
@@ -220,6 +221,18 @@ function applyDbTypeToForm() {
 }
 
 $('#conn-dbtype').addEventListener('change', applyDbTypeToForm);
+
+// Mostra/nasconde i campi SSH; col tunnel attivo l'URI completa non è
+// supportata, quindi torna ai Parametri e nasconde il relativo tab.
+function applySshToForm() {
+  const form = $('#connect-form');
+  const on = form.elements.ssh.checked;
+  $('#ssh-fields').classList.toggle('hidden', !on);
+  if (on && !$('#tab-uri').classList.contains('hidden')) selectConnTab('fields');
+  applyDbTypeToForm();
+}
+
+$('#conn-ssh-toggle').addEventListener('change', applySshToForm);
 
 // Legge la configurazione dal form di connessione (tab attiva inclusa).
 function readConnForm() {
@@ -240,6 +253,17 @@ function readConnForm() {
   }
   cfg.dbType = form.elements.dbType.value;
   cfg.saveAs = form.elements.saveAs.value;
+  // Tunnel SSH: 'ssh' vale "true"/"" così da essere serializzato nell'.ini.
+  const sshOn = form.elements.ssh.checked;
+  cfg.ssh = sshOn ? 'true' : '';
+  if (sshOn) {
+    cfg.sshHost = form.elements.sshHost.value;
+    cfg.sshPort = form.elements.sshPort.value;
+    cfg.sshUser = form.elements.sshUser.value;
+    cfg.sshPassword = form.elements.sshPassword.value;
+    cfg.sshKeyFile = form.elements.sshKeyFile.value;
+    cfg.sshPassphrase = form.elements.sshPassphrase.value;
+  }
   return cfg;
 }
 
@@ -313,8 +337,9 @@ function applyQueryPlaceholders() {
 $('#connect-form').addEventListener('submit', (e) => {
   e.preventDefault();
   const cfg = readConnForm();
-  // In modifica con password lasciata vuota: il server riusa quella salvata.
-  if (editingConn && !cfg.password) cfg.keepPasswordFrom = editingConn;
+  // In modifica: il server riusa i segreti salvati (password DB e credenziali
+  // SSH) per i campi lasciati vuoti.
+  if (editingConn) cfg.keepPasswordFrom = editingConn;
   doConnect(cfg);
 });
 
@@ -396,8 +421,19 @@ function startEditConn(name) {
     form.elements.password.placeholder = res.hasPassword ? '(invariata se lasciata vuota)' : '';
     form.elements.authSource.value = f.authSource || 'admin';
     form.elements.database.value = f.database || '';
+    // Tunnel SSH: i segreti restano lato server, si segnala solo se esistono.
+    form.elements.ssh.checked = (f.ssh || '').toLowerCase() === 'true';
+    form.elements.sshHost.value = f.sshHost || '';
+    form.elements.sshPort.value = f.sshPort || '22';
+    form.elements.sshUser.value = f.sshUser || '';
+    form.elements.sshPassword.value = '';
+    form.elements.sshPassword.placeholder = res.hasSshPassword ? '(invariata se lasciata vuota)' : '(vuoto se usi una chiave)';
+    form.elements.sshKeyFile.value = f.sshKeyFile || '';
+    form.elements.sshPassphrase.value = '';
+    form.elements.sshPassphrase.placeholder = res.hasSshPassphrase ? '(invariata se lasciata vuota)' : '(se la chiave è protetta)';
     form.elements.saveAs.value = name;
     applyDbTypeToForm();
+    applySshToForm();
     editingConn = name;
     $('#conn-edit-name').textContent = name;
     $('#conn-edit-banner').classList.remove('hidden');
@@ -411,7 +447,10 @@ function cancelEditConn() {
   const form = $('#connect-form');
   form.reset();
   form.elements.password.placeholder = '';
+  form.elements.sshPassword.placeholder = '(vuoto se usi una chiave)';
+  form.elements.sshPassphrase.placeholder = '(se la chiave è protetta)';
   applyDbTypeToForm();
+  applySshToForm();
   $('#conn-edit-banner').classList.add('hidden');
   $('#conn-save-btn').classList.add('hidden');
 }
