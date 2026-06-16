@@ -4,6 +4,7 @@ import { $, emit, displayValue, idOf, toast, showQueryError } from './utils.js';
 import { setView } from './main.js';
 import { startWatch } from './live.js';
 import { startEdit, openEditDoc } from './inlineEdit.js';
+import { attachAutocomplete } from './autocomplete.js';
 
 export function applyDbTypeToWorkspace() {
   const isMysql = state.dbType === 'mysql';
@@ -179,6 +180,9 @@ export function deleteDoc(doc) {
 export function initGrid() {
   $('#run-btn').addEventListener('click', () => { state.skip = 0; runQuery(); });
   $('#refresh-btn').addEventListener('click', runQuery);
+
+  attachAutocomplete($('#filter-input'));
+  attachAutocomplete($('#sort-input'), { keywords: false });
 
   for (const sel of ['#filter-input', '#sort-input']) {
     $(sel).addEventListener('keydown', (e) => {

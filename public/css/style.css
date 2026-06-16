@@ -567,8 +567,45 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .info-table th { background: var(--bg-3); font-weight: 600; }
 .kv-table td:first-child { color: var(--fg-dim); width: 45%; }
 
-.mono { font-family: Consolas, monospace; }
-.dim { color: var(--fg-dim); font-style: italic; }
+/* Utilities */
+.hidden {
+  display: none !important;
+}
+.mono {
+  font-family: monospace;
+}
+.dim {
+  color: var(--fg-dim);
+}
+.req {
+  color: var(--err-fg);
+  font-weight: bold;
+}
+
+/* Autocomplete */
+.ac-wrap {
+  position: relative;
+  display: flex;
+  flex: 1;
+}
+.ac-wrap input {
+  flex: 1;
+  width: 100%;
+}
+.ac-list {
+  position: absolute; left: 0; top: 100%; z-index: 50;
+  margin: 2px 0 0; padding: 4px 0; list-style: none;
+  background: #111417; border: 1px solid var(--border);
+  border-radius: 4px; max-height: 220px; overflow-y: auto;
+  min-width: 180px; box-shadow: 0 8px 16px rgba(0,0,0,.6);
+}
+.ac-list li {
+  padding: 4px 10px; cursor: pointer; font-family: monospace;
+}
+.ac-list li.active,
+.ac-list li:hover {
+  background: var(--accent); color: #fff;
+}
 
 /* ---------- Vista UML ---------- */
 
