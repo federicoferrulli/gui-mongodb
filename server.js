@@ -242,8 +242,14 @@ async function teardownConnection({ strategy, tunnel }) {
  * tabId ricadono sulla sessione "default" (stesso comportamento di prima).
  * ------------------------------------------------------------------------- */
 
-// Massimo numero di connessioni DB contemporanee per socket (cioè per browser).
+// Limiti di sicurezza e prevenzione esaurimento risorse
 const MAX_SESSIONS_PER_SOCKET = 8;
+const MAX_GLOBAL_SESSIONS = 100;
+const MAX_GLOBAL_SOCKETS = 500;
+const MAX_SOCKETS_PER_IP = 20;
+
+let activeGlobalSessions = 0;
+const ipConnections = new Map();
 
 // Normalizza il tabId ricevuto dal client (input non fidato): è solo la chiave
 // della mappa di sessioni del proprio socket, mai usato per accedere ad altro.
@@ -253,6 +259,22 @@ function normTabId(tabId) {
 }
 
 io.on('connection', (socket) => {
+  const ip = socket.handshake.address;
+  const currentSocketsForIp = ipConnections.get(ip) || 0;
+
+  // Controllo limiti connessioni WebSocket
+  if (io.engine.clientsCount > MAX_GLOBAL_SOCKETS) {
+    console.warn(`Rifiutata connessione WebSocket: raggiunto limite globale di ${MAX_GLOBAL_SOCKETS}.`);
+    socket.disconnect(true);
+    return;
+  }
+  if (currentSocketsForIp >= MAX_SOCKETS_PER_IP) {
+    console.warn(`Rifiutata connessione WebSocket da IP ${ip}: raggiunto limite per IP di ${MAX_SOCKETS_PER_IP}.`);
+    socket.disconnect(true);
+    return;
+  }
+  ipConnections.set(ip, currentSocketsForIp + 1);
+
   /** @type {Map<string, { strategy: import('./db/DbStrategy'), tunnel: { close: () => void }|null }>} */
   const sessions = new Map();
 
@@ -261,6 +283,7 @@ io.on('connection', (socket) => {
     if (!sess) return;
     // Rimuovi prima di await: evita doppie chiusure su chiamate concorrenti.
     sessions.delete(tabId);
+    activeGlobalSessions--;
     await teardownConnection(sess);
   }
 
@@ -299,10 +322,14 @@ io.on('connection', (socket) => {
       if (!sessions.has(tabId) && sessions.size >= MAX_SESSIONS_PER_SOCKET) {
         throw new Error(`Raggiunto il limite di ${MAX_SESSIONS_PER_SOCKET} connessioni contemporanee: chiudi un tab.`);
       }
+      if (!sessions.has(tabId) && activeGlobalSessions >= MAX_GLOBAL_SESSIONS) {
+        throw new Error(`Raggiunto il limite globale di ${MAX_GLOBAL_SESSIONS} connessioni al database.`);
+      }
       // Riconnessione sullo stesso tab: chiudi prima la sessione precedente.
       await closeSession(tabId);
       const conn = await establishConnection(cfg);
       sessions.set(tabId, { strategy: conn.strategy, tunnel: conn.tunnel });
+      activeGlobalSessions++;
       try {
         // cfg.saveAs = salva (o aggiorna) la connessione, solo se funzionante.
         const saveAs = String(cfg.saveAs || '').trim();
@@ -337,7 +364,13 @@ io.on('connection', (socket) => {
   // nulla: connect + listDatabases + disconnect. Serve al pulsante "Testa".
   socket.on('connections:test', async (cfg, cb) => {
     let conn = null;
+    let sessionIncremented = false;
     try {
+      if (activeGlobalSessions >= MAX_GLOBAL_SESSIONS) {
+        throw new Error(`Raggiunto il limite globale di ${MAX_GLOBAL_SESSIONS} connessioni al database.`);
+      }
+      activeGlobalSessions++;
+      sessionIncremented = true;
       conn = await establishConnection(cfg || {});
       const databases = await conn.strategy.listDatabases();
       cb({ ok: true, dbType: conn.dbType, label: connLabel(conn.effective), databases: databases.length });
@@ -345,6 +378,7 @@ io.on('connection', (socket) => {
       cb({ ok: false, error: errMsg(err) });
     } finally {
       if (conn) await teardownConnection(conn);
+      if (sessionIncremented) activeGlobalSessions--;
     }
   });
 
@@ -518,6 +552,13 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', () => {
     closeAllSessions();
+
+    const count = ipConnections.get(ip);
+    if (count > 1) {
+      ipConnections.set(ip, count - 1);
+    } else {
+      ipConnections.delete(ip);
+    }
   });
 });
 
