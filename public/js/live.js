@@ -53,20 +53,36 @@ export function startWatch() {
 // Watch dello schema: attivato una volta per tab dopo il connect. Dove il
 // change stream non c'è (MySQL, Mongo standalone) arriva schema:unavailable
 // e si ripiega su un polling silenzioso della sidebar.
+// NB: niente reset di schemaPolling nell'ack — su MySQL schema:unavailable
+// arriva PRIMA dell'ack (onUnavailable è sincrono lato server) e il reset
+// spegnerebbe il polling appena attivato.
 export function startSchemaWatch() {
-  emit('schema:watch', {}).then((res) => {
-    res._tab.state.schemaPolling = false;
-  }).catch(() => {
+  emit('schema:watch', {}).catch(() => {
     // Errore lato server: nessun auto-update dello schema, resta l'aggiornamento manuale.
   });
 }
 
 // Aggiorna la sidebar senza disturbare: salta se l'utente sta usando la
 // ricerca (il tree mostrerebbe i risultati filtrati) e non mostra toast.
+// Le collection dei db espansi vengono precaricate prima del render, così
+// tabelle nuove/eliminate e i conteggi compaiono senza flash "caricamento…".
 function refreshTreeAuto() {
   const search = $('#db-search');
   if (search.value.trim() || document.activeElement === search) return;
-  emit('db:list', {}).then((res) => renderDbTree(res.databases)).catch(() => {});
+  emit('db:list', {}).then(async (res) => {
+    const expanded = res.databases.filter((d) => state.expandedDbs.has(d.name));
+    await Promise.all(expanded.map((d) =>
+      // tabId esplicito: la fetch resta sulla sessione che ha avviato il refresh
+      // anche se l'utente cambia tab mentre è in volo.
+      emit('db:collections', { db: d.name, tabId: res._tab ? res._tab.id : undefined })
+        .then((r) => { d.collections = r.collections; })
+        .catch(() => {}) // db sparito nel frattempo: il render lo mostrerà chiuso
+    ));
+    // L'utente può aver cambiato tab mentre le richieste erano in volo:
+    // la sidebar mostra i dati del tab attivo, non si sovrascrive.
+    if (res._tab && res._tab.id !== tabs.activeId) return;
+    renderDbTree(res.databases);
+  }).catch(() => {});
 }
 
 export function initLive() {
