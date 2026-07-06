@@ -12,7 +12,11 @@ export function togglePolling() {
     state.pollingInterval = null;
   }
   if (isEnabled) {
+    const owner = tabs.activeId; // l'intervallo appartiene a questo tab
     state.pollingInterval = setInterval(() => {
+      // runQuery agisce sul tab attivo: il polling di un tab in background
+      // non deve interrogare i dati di un altro tab.
+      if (owner !== tabs.activeId) return;
       if (document.hidden) return;
       if (document.querySelector('.editing')) return;
       if (!$('#editdoc-overlay').classList.contains('hidden')) return;
@@ -27,11 +31,22 @@ export function startWatch() {
   $('#polling-checkbox').checked = false;
   state.pollingShown = false;
   togglePolling();
+  const tab = tabs.list.find((t) => t.id === tabs.activeId);
   emit('collection:watch', { db: state.db, coll: state.coll }).then((res) => {
     res._tab.state.watching = true;
     if (res._tab.id === tabs.activeId) $('#live-badge').classList.remove('hidden');
   }).catch(() => {
-    // If it throws an error or watch is unavailable, it will be handled by the unavailable listener.
+    // Watch rifiutato subito (MySQL non lo supporta, o errore lato server):
+    // stesso ripiego dell'evento watch:unavailable, cioè il toggle di
+    // auto-refresh a polling. Così anche le tabelle hanno l'aggiornamento
+    // automatico.
+    if (!tab || !tabs.list.includes(tab)) return;
+    tab.state.watching = false;
+    tab.state.pollingShown = true;
+    if (tab.id === tabs.activeId) {
+      $('#live-badge').classList.add('hidden');
+      $('#polling-toggle').classList.remove('hidden');
+    }
   });
 }
 

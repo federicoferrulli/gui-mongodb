@@ -38,6 +38,7 @@ export function freshState() {
     collTabs: [],           // collection/tabelle aperte in questo tab (vedi colltabs.js)
     activeCollId: null,     // coll-tab attivo
     selectedDocs: new Set(), // _id dei documenti selezionati per la delete multipla
+    cellSel: { anchor: null, focus: null, cells: new Set() }, // selezione celle stile Excel (vedi cellselect.js)
     schemaPolling: false,   // watch dello schema non disponibile: polling della sidebar
     schemaDirty: false,     // schema cambiato mentre il tab era in background
   };

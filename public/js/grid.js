@@ -3,6 +3,7 @@ import { $, emit, displayValue, idOf, toast, showQueryError } from './utils.js';
 import { openCollTab } from './colltabs.js';
 import { startEdit, openEditDoc } from './inlineEdit.js';
 import { attachAutocomplete } from './autocomplete.js';
+import { applyCellSelection, clearCellSelection } from './cellselect.js';
 
 export function applyDbTypeToWorkspace() {
   const isMysql = state.dbType === 'mysql';
@@ -125,22 +126,24 @@ export function renderGrid() {
   let currentSort = {};
   try { currentSort = JSON.parse($('#sort-input').value || '{}'); } catch { /* ignore */ }
 
-  for (const col of state.columns) {
+  state.columns.forEach((col, colIdx) => {
     const th = document.createElement('th');
+    th.dataset.c = colIdx; // per la selezione di colonna (cellselect.js)
     const dir = currentSort[col];
     th.textContent = col + (dir === 1 ? ' ▲' : dir === -1 ? ' ▼' : '');
-    th.title = 'Clicca per ordinare';
-    th.addEventListener('click', () => {
+    th.title = 'Clicca per ordinare, Ctrl+clic per selezionare la colonna';
+    th.addEventListener('click', (e) => {
+      if (e.ctrlKey || e.metaKey || e.shiftKey) return; // selezione colonna, non sort
       const next = dir === 1 ? -1 : 1;
       $('#sort-input').value = JSON.stringify({ [col]: next });
       state.skip = 0;
       runQuery();
     });
     headRow.appendChild(th);
-  }
+  });
   thead.appendChild(headRow);
 
-  for (const doc of state.docs) {
+  state.docs.forEach((doc, rowIdx) => {
     const tr = document.createElement('tr');
 
     const selectTd = document.createElement('td');
@@ -189,8 +192,11 @@ export function renderGrid() {
     }
     tr.appendChild(actions);
 
-    for (const col of state.columns) {
+    state.columns.forEach((col, colIdx) => {
       const td = document.createElement('td');
+      // Coordinate per la selezione celle stile Excel (vedi cellselect.js).
+      td.dataset.r = rowIdx;
+      td.dataset.c = colIdx;
       const { text, cls } = displayValue(doc[col]);
       const span = document.createElement('span');
       if (cls) span.className = cls;
@@ -203,9 +209,9 @@ export function renderGrid() {
         td.addEventListener('dblclick', () => startEdit(td, doc, col));
       }
       tr.appendChild(td);
-    }
+    });
     tbody.appendChild(tr);
-  }
+  });
 
   const from = state.total === 0 ? 0 : state.skip + 1;
   const to = Math.min(state.skip + state.docs.length, state.skip + state.limit);
@@ -218,6 +224,7 @@ export function renderGrid() {
 
   $('.bulk-delete-toolbar').classList.toggle('hidden', !canSelect || state.total === 0);
   updateBulkDeleteUI();
+  applyCellSelection();
 }
 
 export function deleteDoc(doc) {
@@ -264,17 +271,14 @@ export function deleteAllWithFilter() {
   if ($('#query-mode').value === 'aggregate') return; // solo in modalità find
   const filter = $('#filter-input').value.trim();
   const total = state.total;
+  const isMysql = state.dbType === 'mysql';
   if (total === 0) {
-    toast('Nessun documento da eliminare', true);
-    return;
-  }
-  if (state.dbType === 'mysql' && !filter) {
-    toast('Su MySQL serve una clausola WHERE per l\'eliminazione di massa (es. 1=1 per tutto).', true);
+    toast(isMysql ? 'Nessuna riga da eliminare' : 'Nessun documento da eliminare', true);
     return;
   }
   const msg = filter
-    ? `Eliminare tutti i ${total} documenti con questo filtro? Questa azione non si può annullare.`
-    : `Nessun filtro impostato: eliminare TUTTI i ${total} documenti di "${state.coll}"? Questa azione non si può annullare.`;
+    ? `Eliminare ${isMysql ? `le ${total} righe` : `i ${total} documenti`} con questo filtro? Questa azione non si può annullare.`
+    : `Nessun filtro impostato: eliminare ${isMysql ? `TUTTE le ${total} righe` : `TUTTI i ${total} documenti`} di "${state.coll}"? Questa azione non si può annullare.`;
   if (!confirm(msg)) return;
 
   emit('collection:deleteMany', {
@@ -283,7 +287,7 @@ export function deleteAllWithFilter() {
     filter,
   }).then((res) => {
     state.selectedDocs.clear();
-    toast(`${res.deleted} documenti eliminati`);
+    toast(isMysql ? `${res.deleted} righe eliminate` : `${res.deleted} documenti eliminati`);
     runQuery();
   }).catch((err) => toast(err.message, true));
 }
@@ -304,7 +308,7 @@ export function updateBulkDeleteUI() {
 }
 
 export function initGrid() {
-  $('#run-btn').addEventListener('click', () => { state.skip = 0; runQuery(); });
+  $('#run-btn').addEventListener('click', () => { state.skip = 0; clearCellSelection(); runQuery(); });
   $('#refresh-btn').addEventListener('click', runQuery);
 
   attachAutocomplete($('#filter-input'));
@@ -324,6 +328,7 @@ export function initGrid() {
   $('#prev-btn').addEventListener('click', () => {
     state.skip = Math.max(0, state.skip - state.limit);
     state.selectedDocs.clear(); // reset selezione al cambio pagina
+    clearCellSelection();
     runQuery();
   });
 
@@ -331,12 +336,14 @@ export function initGrid() {
     if (state.skip + state.limit < state.total) {
       state.skip += state.limit;
       state.selectedDocs.clear(); // reset selezione al cambio pagina
+      clearCellSelection();
       runQuery();
     }
   });
 
   $('#page-size').addEventListener('change', () => {
     state.skip = 0;
+    clearCellSelection();
     runQuery();
   });
 

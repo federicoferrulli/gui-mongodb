@@ -347,6 +347,14 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 #grid tbody tr:hover { background: var(--sel); }
 
 #grid td.editable { cursor: cell; }
+
+/* Selezione celle stile Excel (cellselect.js): niente selezione testo nativa
+   sulle celle, evidenza sulle selezionate e bordo sulla cella "attiva". */
+#grid tbody { user-select: none; }
+#grid td.editing { user-select: text; }
+#grid td.cell-selected { background: rgba(76, 175, 125, 0.22); }
+#grid td.cell-focus { outline: 1px solid var(--accent); outline-offset: -1px; }
+#cell-info { color: var(--fg-dim); margin-left: 10px; }
 #grid td .type-oid { color: #c9a26d; }
 #grid td .type-num { color: #7fb4e0; }
 #grid td .type-bool { color: #c586c0; }

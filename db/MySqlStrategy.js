@@ -398,9 +398,10 @@ class MySqlStrategy extends DbStrategy {
   async collectionDeleteMany(db, coll, payload) {
     const pool = this.requirePool();
     const filter = String(payload.filter || '').trim();
-    if (!filter) throw new Error('Filtro WHERE mancante.');
+    // Senza filtro svuota la tabella (come deleteMany({}) su MongoDB):
+    // la conferma rafforzata è responsabilità del frontend.
     const [res] = await pool.query(
-      `DELETE FROM ${qtable(db, coll)} WHERE ${filter}`
+      `DELETE FROM ${qtable(db, coll)}${filter ? ` WHERE ${filter}` : ''}`
     );
     return { deleted: res.affectedRows };
   }
