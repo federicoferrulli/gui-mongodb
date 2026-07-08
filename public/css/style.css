@@ -905,3 +905,68 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   /* iOS Safari zooma sugli input con font < 16px: evitiamolo */
   input, select, textarea, .toolbar input { font-size: 16px; }
 }
+
+/* ---------------- Storico query (queryhistory.js) ---------------- */
+.query-history-wrap { position: relative; display: inline-flex; }
+#query-history-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 60;
+  width: 380px;
+  max-height: 380px;
+  overflow-y: auto;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+.query-history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--fg-dim);
+  position: sticky;
+  top: 0;
+  background: var(--bg-2);
+}
+.query-history-header button {
+  font-size: 0.75rem;
+  padding: 2px 8px;
+}
+.query-history-empty { padding: 14px 10px; color: var(--fg-dim); font-size: 0.85rem; }
+.query-history-item {
+  padding: 7px 10px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+.query-history-item:last-child { border-bottom: none; }
+.query-history-item:hover { background: var(--bg-3); }
+.query-history-item-top {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 3px;
+}
+.query-history-mode {
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.query-history-ts { color: var(--fg-dim); font-size: 0.72rem; }
+.query-history-text {
+  font-family: Consolas, monospace;
+  font-size: 0.8rem;
+  color: var(--fg);
+  word-break: break-all;
+}
+.query-history-sort {
+  font-family: Consolas, monospace;
+  font-size: 0.75rem;
+  color: var(--fg-dim);
+  word-break: break-all;
+}

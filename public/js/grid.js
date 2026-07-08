@@ -4,6 +4,7 @@ import { openCollTab } from './colltabs.js';
 import { startEdit, openEditDoc } from './inlineEdit.js';
 import { attachAutocomplete } from './autocomplete.js';
 import { applyCellSelection, clearCellSelection } from './cellselect.js';
+import { recordQuery, initQueryHistory } from './queryhistory.js';
 
 export function applyDbTypeToWorkspace() {
   const isMysql = state.dbType === 'mysql';
@@ -58,6 +59,14 @@ export function runQuery() {
         limit: $('#page-size').value,
         skip: state.skip,
       };
+
+  // Storico query: registra ciò che l'utente sta eseguendo (best-effort,
+  // anche se poi il server risponde con errore la voce resta utile).
+  recordQuery({
+    mode,
+    filter: $('#filter-input').value.trim(),
+    sort: mode === 'aggregate' ? '' : $('#sort-input').value.trim(),
+  });
 
   emit(`collection:${mode}`, payload).then((res) => {
     state.docs = res.docs;
@@ -346,6 +355,8 @@ export function initGrid() {
     clearCellSelection();
     runQuery();
   });
+
+  initQueryHistory();
 
   $('#delete-selected-btn').addEventListener('click', deleteSelectedDocs);
   $('#delete-all-btn').addEventListener('click', deleteAllWithFilter);

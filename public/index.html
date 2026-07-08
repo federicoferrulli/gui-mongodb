@@ -214,6 +214,10 @@
                      placeholder='Filtro, es. { "age": { "$gt": 30 } }' />
               <input id="sort-input" type="text" spellcheck="false" class="narrow"
                      placeholder='Sort, es. { "name": 1 }' />
+              <span class="query-history-wrap">
+                <button id="query-history-btn" title="Query recenti di questa collection">🕒</button>
+                <div id="query-history-panel" class="hidden"></div>
+              </span>
               <button id="run-btn" class="primary" title="Esegui (Invio)">▶ Esegui</button>
               <button id="insert-btn" title="Inserisci un nuovo documento">+ Documento</button>
               <button id="refresh-btn" title="Ricarica">⟳</button>
