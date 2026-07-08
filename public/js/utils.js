@@ -175,6 +175,47 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') hideContextMenu();
 });
 
+// Riordino via drag & drop di una barra di tab. `el` è l'elemento tab, `id` la
+// sua chiave stabile (il tabId o l'id del coll-tab) e `onReorder(fromId, toId)`
+// riordina l'array sottostante e ri-renderizza. Si lavora per id, non per
+// indice: la barra di connessione salta i tab non connessi, quindi la posizione
+// visiva non coincide con l'indice nell'array.
+export function makeDraggable(el, id, onReorder) {
+  el.draggable = true;
+  el.addEventListener('dragstart', (e) => {
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', id);
+    el.classList.add('dragging');
+  });
+  el.addEventListener('dragend', () => {
+    el.classList.remove('dragging');
+    document.querySelectorAll('.drag-over').forEach((n) => n.classList.remove('drag-over'));
+  });
+  el.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (!el.classList.contains('dragging')) el.classList.add('drag-over');
+  });
+  el.addEventListener('dragleave', () => el.classList.remove('drag-over'));
+  el.addEventListener('drop', (e) => {
+    e.preventDefault();
+    el.classList.remove('drag-over');
+    const fromId = e.dataTransfer.getData('text/plain');
+    if (fromId && fromId !== id) onReorder(fromId, id);
+  });
+}
+
+// Sposta l'elemento con `fromId` nella posizione di quello con `toId`.
+// Ritorna true se qualcosa è cambiato.
+export function reorderById(list, fromId, toId, key = 'id') {
+  const from = list.findIndex((x) => x[key] === fromId);
+  const to = list.findIndex((x) => x[key] === toId);
+  if (from < 0 || to < 0 || from === to) return false;
+  const [moved] = list.splice(from, 1);
+  list.splice(to, 0, moved);
+  return true;
+}
+
 export const openModal = (id) => $(id).classList.remove('hidden');
 export const closeModal = (id) => $(id).classList.add('hidden');
 

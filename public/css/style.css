@@ -739,6 +739,13 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 }
 #tab-add-btn:hover { color: var(--accent); }
 
+/* ---------- Riordino tab via drag & drop (conn-tab e coll-tab) ---------- */
+.conn-tab.dragging, .coll-tab.dragging { opacity: 0.4; }
+.conn-tab.drag-over { box-shadow: inset 2px 0 0 var(--accent); }
+.coll-tab.drag-over { box-shadow: inset 2px 0 0 var(--accent-2); }
+.conn-tab[draggable="true"], .coll-tab[draggable="true"] { cursor: grab; }
+.conn-tab.dragging, .coll-tab.dragging { cursor: grabbing; }
+
 .tab-body { display: flex; flex: 1; min-height: 0; }
 
 /* ---------- Tab delle collection/tabelle aperte (dentro un tab di connessione) ---------- */

@@ -1,7 +1,7 @@
 'use strict';
 
 import { tabs, switchTab, closeTab } from './tabs.js';
-import { $ } from './utils.js';
+import { $, makeDraggable, reorderById } from './utils.js';
 import { saveWorkspaceInputs, renderWorkspace } from './workspace.js';
 import { openConnModal } from './connection.js';
 
@@ -45,6 +45,10 @@ export function renderTabBar() {
       closeTab(tab.id);
       renderTabBar();
       renderWorkspace();
+    });
+
+    makeDraggable(el, tab.id, (fromId, toId) => {
+      if (reorderById(tabs.list, fromId, toId)) renderTabBar();
     });
 
     el.append(dot, name, close);

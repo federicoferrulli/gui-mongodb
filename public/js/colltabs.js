@@ -2,7 +2,7 @@
 
 import { state } from './state.js';
 import { activeTab } from './tabs.js';
-import { $, notify, showContextMenu } from './utils.js';
+import { $, notify, showContextMenu, makeDraggable, reorderById } from './utils.js';
 import { exportImportMenuItems } from './exportimport.js';
 import { runQuery, renderGrid, applyQueryPlaceholders } from './grid.js';
 import { startWatch } from './live.js';
@@ -201,6 +201,10 @@ export function renderCollTabBar() {
         '---',
         { label: '✕ Chiudi tab', action: () => closeCollTab(ct.id) },
       ]);
+    });
+
+    makeDraggable(el, ct.id, (fromId, toId) => {
+      if (reorderById(t.state.collTabs, fromId, toId)) renderCollTabBar();
     });
 
     el.append(name, close);
