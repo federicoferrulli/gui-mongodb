@@ -2,7 +2,8 @@
 
 import { state } from './state.js';
 import { activeTab } from './tabs.js';
-import { $, notify } from './utils.js';
+import { $, notify, showContextMenu } from './utils.js';
+import { exportImportMenuItems } from './exportimport.js';
 import { runQuery, renderGrid, applyQueryPlaceholders } from './grid.js';
 import { startWatch } from './live.js';
 import { setView } from './main.js';
@@ -192,6 +193,14 @@ export function renderCollTabBar() {
     el.addEventListener('click', () => switchCollTab(ct.id));
     el.addEventListener('auxclick', (e) => {
       if (e.button === 1) closeCollTab(ct.id);
+    });
+    el.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      showContextMenu(e.clientX, e.clientY, [
+        ...exportImportMenuItems(ct.db, ct.coll),
+        '---',
+        { label: '✕ Chiudi tab', action: () => closeCollTab(ct.id) },
+      ]);
     });
 
     el.append(name, close);

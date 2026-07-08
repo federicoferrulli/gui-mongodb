@@ -3,6 +3,7 @@ import { $, emit, showContextMenu, toast } from './utils.js';
 import { setView } from './main.js'; // or grid.js
 import { selectCollection } from './grid.js';
 import { openCreateColl, openCreateDb, renameDb, dropDb, renameColl, dropColl } from './schema-ops.js';
+import { exportImportMenuItems } from './exportimport.js';
 
 export function collWord(capital) {
   const w = state.dbType === 'mysql' ? 'tabella' : 'collection';
@@ -94,6 +95,8 @@ export function renderCollectionsList(dbName, container, collections) {
         { label: '▤ Apri dati', action: () => selectCollection(dbName, coll.name, label) },
         { label: `ℹ Dettagli ${collWord()}`, action: () => { selectCollection(dbName, coll.name, label); setView('details'); } },
         { label: '◫ Diagramma UML', action: () => { selectCollection(dbName, coll.name, label); setView('uml'); } },
+        '---',
+        ...exportImportMenuItems(dbName, coll.name),
         '---',
         { label: `✎ Rinomina ${collWord()}…`, action: () => renameColl(dbName, coll.name) },
         { label: `🗑 Elimina ${collWord()}…`, danger: true, action: () => dropColl(dbName, coll.name) },

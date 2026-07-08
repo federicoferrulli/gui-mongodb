@@ -406,6 +406,78 @@ class MySqlStrategy extends DbStrategy {
     return { deleted: res.affectedRows };
   }
 
+  // Valore di cella per l'export CSV: date in ISO, BLOB in base64,
+  // oggetti/array come JSON; quoting RFC 4180 dove serve.
+  static csvCell(v) {
+    if (v === null || v === undefined) return '';
+    let s;
+    if (v instanceof Date) s = isNaN(v.getTime()) ? '' : v.toISOString();
+    else if (Buffer.isBuffer(v)) s = v.toString('base64');
+    else if (typeof v === 'object') s = JSON.stringify(v);
+    else s = String(v);
+    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  }
+
+  // Esporta un blocco di righe come CSV (format: 'csv', header a parte) o
+  // come statement INSERT (format: 'sql'). Paginazione con skip/limit.
+  async collectionExport(db, coll, payload) {
+    const pool = this.requirePool();
+    const format = payload.format === 'sql' ? 'sql' : 'csv';
+    const limit = Math.min(Math.max(parseInt(payload.limit, 10) || 500, 1), 1000);
+    const skip = Math.max(parseInt(payload.skip, 10) || 0, 0);
+    const table = qtable(db, coll);
+    const [rows, fields] = await pool.query(`SELECT * FROM ${table} LIMIT ? OFFSET ?`, [limit, skip]);
+    const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total FROM ${table}`);
+    const columns = (fields || []).map((f) => f.name);
+
+    let lines;
+    if (format === 'sql') {
+      lines = rows.map((r) => {
+        const vals = columns.map((c) => mysql.escape(r[c]));
+        return `INSERT INTO ${table} (${columns.map(qid).join(', ')}) VALUES (${vals.join(', ')});`;
+      });
+    } else {
+      lines = rows.map((r) => columns.map((c) => MySqlStrategy.csvCell(r[c])).join(','));
+    }
+    return {
+      lines,
+      count: rows.length,
+      total: Number(total),
+      format,
+      header: format === 'csv' ? columns.map(MySqlStrategy.csvCell).join(',') : null,
+    };
+  }
+
+  // Importa un blocco di righe (payload.docs = array di oggetti Extended JSON
+  // serializzati: relaxed = true produce i tipi JS nativi per i parametri
+  // SQL). Le righe vengono inserite una a una per contare ok/errori.
+  async collectionImport(db, coll, payload) {
+    const pool = this.requirePool();
+    const raw = Array.isArray(payload.docs) ? payload.docs : [];
+    if (!raw.length) throw new Error('Nessuna riga da importare nel blocco.');
+    const table = qtable(db, coll);
+    let inserted = 0;
+    const errors = [];
+    for (let i = 0; i < raw.length; i++) {
+      try {
+        const row = EJSON.deserialize(raw[i], { relaxed: true });
+        if (!row || typeof row !== 'object' || Array.isArray(row)) {
+          throw new Error('la riga deve essere un oggetto { "colonna": valore }');
+        }
+        const cols = Object.keys(row);
+        if (!cols.length) throw new Error('riga vuota');
+        await pool.query(
+          `INSERT INTO ${table} (${cols.map(qid).join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`,
+          cols.map((c) => toSqlValue(row[c]))
+        );
+        inserted += 1;
+      } catch (err) {
+        if (errors.length < 10) errors.push(`Riga ${i + 1}: ${(err && err.message) || err}`);
+      }
+    }
+    return { inserted, failed: raw.length - inserted, errors };
+  }
+
   async createCollection(db, name, payload = {}) {
     const pool = this.requirePool();
     const table = String(name || '').trim();

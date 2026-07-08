@@ -17,6 +17,7 @@ import { initInsert } from './insert.js';
 import { initDetails, loadDetails } from './details.js';
 import { initLive } from './live.js';
 import { initResponsive } from './responsive.js';
+import { initExportImport } from './exportimport.js';
 
 export function setView(view) {
   state.view = view;
@@ -80,6 +81,7 @@ initDetails();
 initLive();
 initResizers();
 initResponsive();
+initExportImport();
 
 // Stato iniziale: nessun tab aperto, schermata di benvenuto.
 renderTabBar();

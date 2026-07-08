@@ -74,6 +74,18 @@ class DbStrategy {
   async collectionDeleteMany(_db, _coll, _payload) { throw unsupported(); }
 
   /**
+   * Esporta un blocco di documenti/righe come righe di testo già formattate
+   * (paginato con skip/limit): { lines, count, total, header? }.
+   */
+  async collectionExport(_db, _coll, _payload) { throw unsupported(); }
+
+  /**
+   * Importa un blocco di documenti/righe (payload.docs = array in Extended
+   * JSON serializzato) e riporta il conteggio: { inserted, failed, errors }.
+   */
+  async collectionImport(_db, _coll, _payload) { throw unsupported(); }
+
+  /**
    * Aggiornamenti in tempo reale: handlers = { onChange, onUnavailable }.
    * I DBMS senza change stream lasciano l'implementazione di default.
    */
