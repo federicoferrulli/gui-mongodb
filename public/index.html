@@ -431,6 +431,31 @@
     </div>
   </div>
 
+  <!-- ===================== Modale import collection / tabella ===================== -->
+  <div id="import-overlay" class="overlay hidden">
+    <div class="modal wide">
+      <h2 id="import-title">Importa</h2>
+      <p class="subtitle" id="import-subtitle"></p>
+      <div class="form-row">
+        <label>File da importare
+          <input type="file" id="import-file" />
+        </label>
+      </div>
+      <textarea id="import-text" rows="12" spellcheck="false"
+                placeholder="…oppure incolla qui il contenuto"></textarea>
+      <div id="import-progress" class="import-progress hidden">
+        <div class="import-progress-track"><div id="import-progress-bar" class="import-progress-bar"></div></div>
+        <span id="import-progress-label" class="hint"></span>
+      </div>
+      <div id="import-report" class="import-report hidden"></div>
+      <div id="import-error" class="error hidden"></div>
+      <div class="modal-actions">
+        <button id="import-cancel" class="ghost">Chiudi</button>
+        <button id="import-run" class="primary">Importa</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ===================== Modale nuovo indice ===================== -->
   <div id="idxcreate-overlay" class="overlay hidden">
     <div class="modal">

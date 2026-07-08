@@ -80,6 +80,10 @@ function parseLooseValue(text) {
   }
 }
 
+function errMsgSafe(err) {
+  return (err && err.message) || String(err);
+}
+
 function assertDbName(name) {
   if (!name || /[\\/. "$*<>:|?]/.test(name)) {
     throw new Error(`Nome di database non valido: "${name}"`);
@@ -531,6 +535,57 @@ class MongoDbStrategy extends DbStrategy {
     const filter = parseQueryObject(payload.filter, {});
     const res = await client.db(db).collection(coll).deleteMany(filter);
     return { deleted: res.deletedCount };
+  }
+
+  // Esporta un blocco di documenti come righe EJSON (una per documento):
+  // il client li assembla in un array JSON. Paginazione con skip/limit.
+  async collectionExport(db, coll, payload) {
+    const client = this.requireClient();
+    const limit = Math.min(Math.max(parseInt(payload.limit, 10) || 500, 1), 1000);
+    const skip = Math.max(parseInt(payload.skip, 10) || 0, 0);
+    const collection = client.db(db).collection(coll);
+    const docs = await collection.find({}).skip(skip).limit(limit).toArray();
+    // relaxed: i numeri restano numeri, ObjectId/Date restano $oid/$date,
+    // così il file riesportato si può reimportare senza perdita di tipi.
+    const lines = docs.map((d) => EJSON.stringify(d, { relaxed: true }));
+    const total = await collection.countDocuments();
+    return { lines, count: docs.length, total, format: 'json' };
+  }
+
+  // Importa un blocco di documenti (payload.docs = array di oggetti Extended
+  // JSON serializzati). relaxed: false preserva i tipi BSON ($oid, $date...).
+  async collectionImport(db, coll, payload) {
+    const client = this.requireClient();
+    const raw = Array.isArray(payload.docs) ? payload.docs : [];
+    if (!raw.length) throw new Error('Nessun documento da importare nel blocco.');
+    const errors = [];
+    const docs = [];
+    raw.forEach((d, i) => {
+      try {
+        const doc = EJSON.deserialize(d, { relaxed: false });
+        if (!doc || typeof doc !== 'object' || Array.isArray(doc)) {
+          throw new Error('il documento deve essere un oggetto JSON');
+        }
+        docs.push(doc);
+      } catch (err) {
+        errors.push(`Documento ${i + 1}: ${err.message}`);
+      }
+    });
+    let inserted = 0;
+    if (docs.length) {
+      try {
+        const res = await client.db(db).collection(coll).insertMany(docs, { ordered: false });
+        inserted = res.insertedCount;
+      } catch (err) {
+        // BulkWriteError: alcuni documenti possono comunque essere entrati.
+        inserted = (err.result && (err.result.insertedCount ?? err.result.nInserted)) || 0;
+        for (const we of (err.writeErrors || []).slice(0, 10)) {
+          errors.push(we.errmsg || we.message || String(we));
+        }
+        if (!(err.writeErrors || []).length) errors.push(errMsgSafe(err));
+      }
+    }
+    return { inserted, failed: raw.length - inserted, errors: errors.slice(0, 10) };
   }
 
   // Change stream: richiede un replica set; su server standalone degrada

@@ -522,6 +522,13 @@ io.on('connection', (socket) => {
   delegate('doc:delete', (strategy, p) => strategy.docDelete(p.db, p.coll, p));
   delegate('collection:deleteMany', (strategy, p) => strategy.collectionDeleteMany(p.db, p.coll, p));
 
+  // --- Export / import di collection e tabelle ---------------------------------
+  // Export: il client richiede blocchi successivi (skip/limit) e assembla il
+  // file; import: il client invia batch di documenti/righe in Extended JSON.
+
+  delegate('collection:export', (strategy, p) => strategy.collectionExport(p.db, p.coll, p));
+  delegate('collection:import', (strategy, p) => strategy.collectionImport(p.db, p.coll, p));
+
   // --- Aggiornamenti in tempo reale -------------------------------------------
   // I DBMS senza change stream (MySQL) falliscono qui: il frontend nasconde
   // semplicemente il badge LIVE.
