@@ -111,7 +111,7 @@ async function newMcpClient() {
     mcp1 = await newMcpClient();
     const tools = await mcp1.client.listTools();
     const names = tools.tools.map((t) => t.name);
-    for (const t of ['list_saved_connections', 'connect_database', 'disconnect_database', 'get_databases_and_collections', 'get_schema', 'execute_query', 'execute_write']) {
+    for (const t of ['list_saved_connections', 'connect_database', 'disconnect_database', 'get_databases_and_collections', 'get_schema', 'execute_query', 'execute_write', 'set_connection_read_only']) {
       assert(names.includes(t), `tool "${t}" esposto`);
     }
 
@@ -262,6 +262,29 @@ async function newMcpClient() {
     assert(auditText.includes(`"connection":"${RW_NAME}"`) && auditText.includes('"event":"executed"'), 'audit log con eventi requested/executed');
 
     await call(mcp1.client, 'disconnect_database', { connection_id: cid2 });
+
+    console.log('15. set_connection_read_only: flag readOnly con doppia conferma');
+    const ro1 = await call(mcp1.client, 'set_connection_read_only', { connection_name: CONN_NAME, read_only: false });
+    assert(ro1.ok && ro1.data.requires_confirmation && ro1.data.confirm_token, 'primo passo: anteprima + confirm_token');
+    const roFake = await call(mcp1.client, 'set_connection_read_only', { connection_name: CONN_NAME, confirm_token: 'token-inventato' });
+    assert(!roFake.ok, 'confirm_token inventato rifiutato');
+    const roCross = await call(mcp1.client, 'execute_write', { connection_id: 'x', db: DB, confirm_token: ro1.data.confirm_token });
+    assert(!roCross.ok, 'token di set_connection_read_only non spendibile su execute_write');
+    const ro2 = await call(mcp1.client, 'set_connection_read_only', { connection_name: CONN_NAME, confirm_token: ro1.data.confirm_token });
+    assert(ro2.ok && ro2.data.executed && ro2.data.readOnly === false, 'secondo passo: flag aggiornato col token');
+    const listAfter = await call(mcp1.client, 'list_saved_connections', {});
+    assert(listAfter.ok && listAfter.data.connections.some((c) => c.name === CONN_NAME && c.readOnly === false), 'readOnly=false visibile in list_saved_connections');
+    const rwNow = await call(mcp1.client, 'connect_database', { saved: CONN_NAME });
+    assert(rwNow.ok && rwNow.data.writable === true, 'nuova connessione scrivibile dopo il cambio flag');
+    await call(mcp1.client, 'disconnect_database', { connection_id: rwNow.ok ? rwNow.data.connection_id : '' });
+    const roBack1 = await call(mcp1.client, 'set_connection_read_only', { connection_name: CONN_NAME, read_only: true });
+    assert(roBack1.ok && roBack1.data.requires_confirmation, 'anche il ritorno a sola lettura richiede conferma');
+    const roBack2 = await call(mcp1.client, 'set_connection_read_only', { connection_name: CONN_NAME, confirm_token: roBack1.data.confirm_token });
+    assert(roBack2.ok && roBack2.data.executed && roBack2.data.readOnly === true, 'flag riportato a sola lettura');
+    const roNoop = await call(mcp1.client, 'set_connection_read_only', { connection_name: CONN_NAME, read_only: true });
+    assert(roNoop.ok && roNoop.data.changed === false, 'valore già impostato: nessun token, nessuna modifica');
+    const roMissing = await call(mcp1.client, 'set_connection_read_only', { connection_name: 'inesistente-mcp', read_only: false });
+    assert(!roMissing.ok, 'connessione inesistente rifiutata');
 
     console.log(process.exitCode ? '\nTEST FALLITI' : '\nTUTTI I TEST SUPERATI');
   } catch (err) {

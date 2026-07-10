@@ -265,6 +265,16 @@ attachMcp(app, {
   loadConnections,
   connLabel,
   connDbType,
+  // Unica scrittura su connections.ini concessa al gateway MCP: il flag
+  // readOnly di una connessione salvata (mai gli altri campi, mai i segreti).
+  // La conferma umana a due passaggi è responsabilità del gateway.
+  setConnectionReadOnly: (name, readOnly) => {
+    const sections = loadConnections();
+    const key = String(name || '').trim();
+    if (!sections[key]) throw new Error(`Connessione salvata "${key}" inesistente.`);
+    sections[key].readOnly = readOnly ? 'true' : 'false';
+    saveConnections(sections);
+  },
   establishConnection,
   teardownConnection,
   maxDbSessions: MAX_SESSIONS_PER_SOCKET,

@@ -31,8 +31,10 @@ Richiedono **il server già avviato su :3030** e un DB locale in ascolto.
 Creano e poi ripuliscono i database `gui_mongodb_e2e` / `gui_mysql_e2e`.
 
 ```bash
-node test/e2e.js         # MongoDB su localhost:27017
-node test/e2e-mysql.js   # MySQL locale (root, password vuota; porta env MYSQL_PORT, default 3306)
+node test/e2e.js           # MongoDB su localhost:27017
+node test/e2e-mysql.js     # MySQL locale (root, password vuota; porta env MYSQL_PORT, default 3306)
+node test/e2e-mcp.js       # gateway MCP su MongoDB
+node test/e2e-mcp-mysql.js # gateway MCP su MySQL (env MYSQL_PORT/MYSQL_PASSWORD)
 ```
 
 ## Funzionalità
@@ -64,6 +66,7 @@ node test/e2e-mysql.js   # MySQL locale (root, password vuota; porta env MYSQL_P
 | Diagramma UML | tab "UML": collection corrente e associazioni con le altre |
 | Aggiornamenti live | change stream MongoDB (badge "● LIVE"); auto-refresh dello schema in sidebar |
 | Layout responsive | drawer laterale ≤900px, supporto touch/orientamento |
+| Gateway MCP per agenti AI | endpoint `/mcp` (Streamable HTTP): esplorazione e query in sola lettura; scritture, drop e cambio del flag `readOnly` solo con doppia conferma umana — vedi `docs/MCP.md` |
 
 ### Note
 
@@ -90,9 +93,11 @@ node test/e2e-mysql.js   # MySQL locale (root, password vuota; porta env MYSQL_P
 - Le **associazioni del diagramma UML** sono euristiche (nomi dei campi, tipi
   ObjectId); per MySQL si aggiungono le foreign key reali da `information_schema`.
 
-## Documentazione per gli agenti
+## Documentazione
 
+- `docs/MCP.md` — guida all'installazione e all'uso del server MCP (Claude Code, Claude Desktop, Cursor...).
 - `CLAUDE.md` / `AGENT.md` — guida all'architettura per gli agenti di coding.
 - `strategy_db.md` — piano storico di estensione multi-database (MongoDB & MySQL).
+- `strategy_mcp.md` — piano e stato dell'integrazione MCP (Fasi 1–3 + estensioni).
 </content>
 </invoke>

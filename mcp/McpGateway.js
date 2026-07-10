@@ -469,7 +469,7 @@ function buildMcpServer(session, deps) {
   }, async (args) => {
     const sess = requireDbSession(args.connection_id);
     if (!sess.writesAllowed) {
-      throw new Error(`La connessione "${sess.name}" è in sola lettura: per abilitare le scritture imposta readOnly=false nella sua sezione di connections.ini.`);
+      throw new Error(`La connessione "${sess.name}" è in sola lettura: per abilitare le scritture imposta readOnly=false nella sua sezione di connections.ini, oppure usa il tool set_connection_read_only (richiede la conferma esplicita dell'utente umano) e poi riconnettiti.`);
     }
     const db = String(args.db || '').trim();
     if (!db) throw new Error('Parametro "db" mancante.');
@@ -481,7 +481,7 @@ function buildMcpServer(session, deps) {
     const token = String(args.confirm_token || '').trim();
     if (token) {
       const pending = session.pendingWrites.get(token);
-      if (!pending || pending.connectionId !== String(args.connection_id)) {
+      if (!pending || pending.kind !== 'write' || pending.connectionId !== String(args.connection_id)) {
         throw new Error('confirm_token sconosciuto, scaduto o di un\'altra connessione: ripeti la richiesta senza token.');
       }
       session.pendingWrites.delete(token); // monouso
@@ -519,6 +519,7 @@ function buildMcpServer(session, deps) {
 
     const confirmToken = crypto.randomUUID();
     session.pendingWrites.set(confirmToken, {
+      kind: 'write',
       connectionId: String(args.connection_id),
       exec: op.exec,
       summary: op.summary,
@@ -532,6 +533,84 @@ function buildMcpServer(session, deps) {
       preview: op.summary,
       ...(affectedEstimate != null ? { affected_estimate: affectedEstimate } : {}),
       istruzioni: 'Mostra l\'anteprima all\'utente umano e chiedi conferma esplicita. Solo se l\'utente approva, richiama execute_write con questo confirm_token. Se l\'utente rifiuta, non richiamare il tool.',
+    });
+  });
+
+  // --- Flag readOnly delle connessioni salvate (con conferma) -----------------
+  // Unica modifica a connections.ini raggiungibile via MCP: il flag readOnly di
+  // una connessione salvata, mai gli altri campi né i segreti. Stesso schema
+  // human-in-the-loop di execute_write: anteprima + confirm_token monouso, in
+  // ENTRAMBE le direzioni (anche tornare a sola lettura richiede conferma).
+
+  tool('set_connection_read_only', {
+    title: 'Cambia il flag readOnly di una connessione salvata (con conferma)',
+    description:
+      'Imposta il flag readOnly di una connessione salvata in connections.ini (unico campo modificabile via MCP: ' +
+      'mai credenziali o altri parametri). Con read_only=false la connessione diventa scrivibile per execute_write; ' +
+      'con read_only=true torna in sola lettura. Funziona in due passaggi come execute_write: ' +
+      'primo passo SENZA confirm_token per ottenere anteprima e token; mostra l\'anteprima all\'utente umano e ' +
+      'richiama col token solo dopo la sua approvazione esplicita. NON confermare mai di tua iniziativa. ' +
+      'Il cambio vale per le connessioni aperte da quel momento in poi: riapri con connect_database per applicarlo. ' +
+      'Ogni richiesta ed esecuzione viene registrata nell\'audit log.',
+    inputSchema: {
+      connection_name: z.string().describe('Nome della connessione salvata (vedi list_saved_connections)'),
+      read_only: z.boolean().optional().describe('Nuovo valore del flag: false = scritture consentite, true = sola lettura (obbligatorio al primo passo)'),
+      confirm_token: z.string().optional().describe('Token restituito dal primo passo, da inviare solo dopo la conferma esplicita dell\'utente umano'),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+  }, async (args) => {
+    const name = String(args.connection_name || '').trim();
+    if (!name) throw new Error('Parametro "connection_name" mancante.');
+    sweepPendingWrites();
+    const auditBase = { sessionId: session.id, connection: name, operation: 'set_connection_read_only' };
+
+    // Secondo passo: applica la modifica registrata col token.
+    const token = String(args.confirm_token || '').trim();
+    if (token) {
+      const pending = session.pendingWrites.get(token);
+      if (!pending || pending.kind !== 'ini' || pending.name !== name) {
+        throw new Error('confirm_token sconosciuto, scaduto o di un\'altra richiesta: ripeti la richiesta senza token.');
+      }
+      session.pendingWrites.delete(token); // monouso
+      try {
+        deps.setConnectionReadOnly(name, pending.readOnly);
+        audit({ ...auditBase, event: 'executed', readOnly: pending.readOnly });
+        return jsonResult({
+          executed: true,
+          connection: name,
+          readOnly: pending.readOnly,
+          nota: 'Il nuovo flag vale per le prossime connessioni: riapri con connect_database per applicarlo.',
+        });
+      } catch (err) {
+        audit({ ...auditBase, event: 'failed', readOnly: pending.readOnly, error: errMsg(err) });
+        throw err;
+      }
+    }
+
+    // Primo passo: validazione, anteprima e token di conferma.
+    if (typeof args.read_only !== 'boolean') {
+      throw new Error('Parametro "read_only" mancante: indica true (sola lettura) o false (scritture consentite).');
+    }
+    const conn = deps.loadConnections()[name];
+    if (!conn) throw new Error(`Connessione salvata "${name}" inesistente: verifica con list_saved_connections.`);
+    const current = String(conn.readOnly || '').trim().toLowerCase() !== 'false';
+    if (current === args.read_only) {
+      return jsonResult({ changed: false, connection: name, readOnly: current, message: 'Il flag ha già il valore richiesto: nessuna modifica necessaria.' });
+    }
+    const confirmToken = crypto.randomUUID();
+    session.pendingWrites.set(confirmToken, {
+      kind: 'ini',
+      name,
+      readOnly: args.read_only,
+      expiresAt: Date.now() + CONFIRM_TTL_MS,
+    });
+    audit({ ...auditBase, event: 'requested', readOnly: args.read_only });
+    return jsonResult({
+      requires_confirmation: true,
+      confirm_token: confirmToken,
+      expires_in_seconds: CONFIRM_TTL_MS / 1000,
+      preview: { connection: name, readOnly: { da: current, a: args.read_only } },
+      istruzioni: 'Mostra l\'anteprima all\'utente umano e chiedi conferma esplicita. Solo se l\'utente approva, richiama set_connection_read_only con questo confirm_token. Se l\'utente rifiuta, non richiamare il tool.',
     });
   });
 

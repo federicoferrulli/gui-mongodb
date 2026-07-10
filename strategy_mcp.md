@@ -148,6 +148,11 @@ Tutte e tre le fasi sono implementate in `mcp/McpGateway.js` (montato da `server
 - **Audit log**: ogni richiesta/esecuzione/fallimento è registrato in `mcp-audit.log` (JSON Lines: timestamp, sessione MCP, connessione, statement/operazione, esito; file in `.gitignore`).
 - **Vincolo a livello di motore**: resta la raccomandazione di usare per le connessioni scrivibili un utente DB con privilegi minimi (per quelle in sola lettura, un utente con soli `SELECT`), così il vincolo non dipende solo dal codice del gateway.
 
+**Estensioni post-Fase 3 (11/07/2026):**
+
+- **Drop di database e collection**: `execute_write` accetta le `operation` `drop_collection` e `drop_database`, valide per entrambi i dbType (usano `dropCollection`/`dropDatabase` delle strategie, che proteggono i db/schemi di sistema). Stesse guardie del DML: connessione con `readOnly=false`, doppia conferma col `confirm_token`, audit; l'anteprima stima l'impatto (documenti/righe per il drop di collection, numero di collection per il drop di database). Nessun altro DDL è ammesso.
+- **Tool `set_connection_read_only`**: unica modifica a `connections.ini` raggiungibile via MCP — cambia il solo flag `readOnly` di una connessione salvata (mai credenziali o altri campi), con doppia conferma in **entrambe** le direzioni e audit. Il nuovo valore vale per le connessioni aperte successivamente (serve riconnettersi con `connect_database`).
+
 **Fase 2 — Prompts & Resources:**
 
 - **Resource** `schema://{connectionId}/{db}` (ResourceTemplate, `text/markdown`): diagramma UML in **Mermaid** (`erDiagram`) + dizionario dati (campi, tipi, presenza %, relazioni). Invece di aggiornare la risorsa a ogni cambio di schema (che richiederebbe notifiche push, non disponibili con le risposte JSON), il contenuto è **generato al momento della lettura** da `dbSchema(db)`: mai obsoleto per costruzione.
