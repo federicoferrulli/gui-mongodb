@@ -312,24 +312,33 @@ class MySqlStrategy extends DbStrategy {
   }
 
   // Modalità "SQL Raw": esegue una query libera nel contesto del database.
+  // payload.readOnly (usato dal gateway MCP): esegue dentro una transazione
+  // READ ONLY — il motore rifiuta qualsiasi scrittura, comprese quelle
+  // annidate in CTE o EXPLAIN ANALYZE — e con un timeout di 30 secondi.
   async collectionAggregate(db, _coll, payload) {
     const pool = this.requirePool();
     const sql = String(payload.pipeline || '').trim();
     if (!sql) throw new Error('Inserisci una query SQL da eseguire.');
+    const readOnly = !!payload.readOnly;
     const conn = await pool.getConnection();
     try {
       await conn.query(`USE ${qid(db)}`);
-      const [result, fields] = await conn.query(sql);
-      if (Array.isArray(result)) {
-        const rows = result.slice(0, 500);
-        const columns = (fields || []).map((f) => f.name);
-        return { docs: rows.map(serializeRow), columns, total: result.length, skip: 0, limit: 500 };
+      if (readOnly) await conn.query('START TRANSACTION READ ONLY');
+      try {
+        const [result, fields] = await conn.query(readOnly ? { sql, timeout: 30000 } : sql);
+        if (Array.isArray(result)) {
+          const rows = result.slice(0, 500);
+          const columns = (fields || []).map((f) => f.name);
+          return { docs: rows.map(serializeRow), columns, total: result.length, skip: 0, limit: 500 };
+        }
+        // Statement senza result set (UPDATE, DELETE, DDL...): riepilogo.
+        const summary = { righeCoinvolte: result.affectedRows };
+        if (result.insertId) summary.insertId = result.insertId;
+        if (result.info) summary.info = result.info;
+        return { docs: [summary], columns: Object.keys(summary), total: 1, skip: 0, limit: 500 };
+      } finally {
+        if (readOnly) await conn.query('ROLLBACK').catch(() => {});
       }
-      // Statement senza result set (UPDATE, DELETE, DDL...): riepilogo.
-      const summary = { righeCoinvolte: result.affectedRows };
-      if (result.insertId) summary.insertId = result.insertId;
-      if (result.info) summary.info = result.info;
-      return { docs: [summary], columns: Object.keys(summary), total: 1, skip: 0, limit: 500 };
     } finally {
       conn.release();
     }

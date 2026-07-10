@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const readline = require('readline');
 const DbFactory = require('./db/DbFactory');
 const { openSshTunnel } = require('./db/SshTunnel');
+const { attachMcp } = require('./mcp/McpGateway');
 
 const PORT = process.env.PORT || 3030;
 
@@ -250,6 +251,27 @@ const MAX_SOCKETS_PER_IP = 20;
 
 let activeGlobalSessions = 0;
 const ipConnections = new Map();
+
+/* ---------------------------------------------------------------------------
+ * Gateway MCP: espone i tools di sola lettura per i client AI sull'endpoint
+ * /mcp (Streamable HTTP). Riusa le connessioni salvate e il ciclo di vita
+ * delle sessioni di questo file; il budget globale è condiviso coi socket.
+ * ------------------------------------------------------------------------- */
+
+attachMcp(app, {
+  loadConnections,
+  connLabel,
+  connDbType,
+  establishConnection,
+  teardownConnection,
+  maxDbSessions: MAX_SESSIONS_PER_SOCKET,
+  tryAcquireGlobalSession: () => {
+    if (activeGlobalSessions >= MAX_GLOBAL_SESSIONS) return false;
+    activeGlobalSessions += 1;
+    return true;
+  },
+  releaseGlobalSession: () => { activeGlobalSessions -= 1; },
+});
 
 // Normalizza il tabId ricevuto dal client (input non fidato): è solo la chiave
 // della mappa di sessioni del proprio socket, mai usato per accedere ad altro.
@@ -624,6 +646,7 @@ async function startServer() {
   const HOST = process.env.HOST || '127.0.0.1';
   server.listen(PORT, HOST, () => {
     console.log(`Mongo Web GUI in ascolto su http://${HOST}:${PORT}`);
+    console.log(`Endpoint MCP (Streamable HTTP) su http://${HOST}:${PORT}/mcp`);
   });
 }
 
