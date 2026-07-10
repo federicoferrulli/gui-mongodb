@@ -25,6 +25,31 @@ comparirà la schermata di connessione. Nel form scegli il **tipo di database**
 (MongoDB o MySQL) e inserisci host/porta/credenziali, oppure una connection string
 completa (MongoDB).
 
+### Avvio "desktop"
+
+Il launcher apre solo il browser se il server è già attivo; altrimenti chiede la
+passphrase dei segreti (prompt mascherato nella console/terminale) e avvia il
+server **in background**: la console si chiude subito dopo l'avvio,
+i log finiscono in `codedb.log`. Il browser si apre appena la porta risponde.
+Per fermare il server: `CodeDB.cmd stop` / `./codedb.sh stop`. Con una
+passphrase sbagliata il server **esce subito senza toccare `connections.ini`**.
+Se avvii una seconda istanza sulla stessa porta, il server esce con un
+messaggio chiaro (usa `PORT=<altra porta>`).
+
+- **Windows** — doppio click su **`CodeDB.cmd`**; con `npm run shortcut` crei i
+  collegamenti **CodeDB** (icona `public/codedb.ico`) sul Desktop e nel menu
+  Start. I collegamenti puntano a `cmd.exe /c ...` proprio per poter essere
+  aggiunti alla **barra delle applicazioni**: tasto destro sul collegamento →
+  *Aggiungi alla barra delle applicazioni* (su Windows 11 sotto *Mostra altre
+  opzioni*), oppure trascinalo sulla barra; dal menu Start anche *Aggiungi a Start*.
+- **Linux/macOS** — `./codedb.sh`; con `npm run shortcut-unix` su Linux crei la
+  voce **CodeDB** nel menu applicazioni (`~/.local/share/applications`, icona
+  `public/codedb.png`), da cui aggiungerla ai preferiti/dock (GNOME: tasto
+  destro → *Aggiungi ai preferiti*); su macOS lo script stampa le istruzioni
+  per il Dock o per creare una app con Automator.
+
+Le icone sono generate proceduralmente da `node tools/genera-icona.js`.
+
 ### Test end-to-end
 
 Richiedono **il server già avviato su :3030** e un DB locale in ascolto.

@@ -47,6 +47,10 @@ const CONN_FIELDS = [
 const SECRET_FIELDS = ['password', 'sshPassword', 'sshPassphrase'];
 
 let encryptionKey = null;
+// Conta i segreti che non si decifrano: all'avvio un valore > 0 significa
+// passphrase sbagliata e il server rifiuta di partire (vedi main), invece di
+// proseguire e riscrivere il file coi segreti azzerati.
+let decryptFailures = 0;
 
 function encryptSecret(text) {
   if (!text || typeof text !== 'string') return text;
@@ -75,6 +79,7 @@ function decryptSecret(text) {
     return decrypted;
   } catch (e) {
     console.error("Errore decrittazione segreto:", e.message);
+    decryptFailures += 1;
     return "";
   }
 }
@@ -660,13 +665,28 @@ async function startServer() {
 
   encryptionKey = crypto.createHash('sha256').update(passphrase).digest();
   
-  // Migrazione automatica: decifra (o legge in chiaro) e risalva cifrando tutto
+  // Migrazione automatica: decifra (o legge in chiaro) e risalva cifrando tutto.
+  // Se anche un solo segreto non si decifra la passphrase è sbagliata: uscire
+  // subito, senza toccare il file (proseguire lo riscriverebbe coi segreti vuoti).
   const conns = loadConnections();
+  if (decryptFailures > 0) {
+    console.error('Passphrase errata: i segreti di connections.ini non si decifrano con questa passphrase.');
+    console.error('Riavvia con la passphrase corretta. (Copie precedenti del file: connections.ini.bak / .bak2.)');
+    process.exit(1);
+  }
   if (Object.keys(conns).length > 0) {
     saveConnections(conns);
   }
 
   const HOST = process.env.HOST || '127.0.0.1';
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`La porta ${PORT} è già in uso: probabilmente CodeDB è già in esecuzione.`);
+      console.error(`Apri http://localhost:${PORT} nel browser, oppure avvia una seconda istanza con PORT=<altra porta>.`);
+      process.exit(1);
+    }
+    throw err;
+  });
   server.listen(PORT, HOST, () => {
     console.log(`CodeDB in ascolto su http://${HOST}:${PORT}`);
     console.log(`Endpoint MCP (Streamable HTTP) su http://${HOST}:${PORT}/mcp`);
