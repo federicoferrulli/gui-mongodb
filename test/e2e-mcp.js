@@ -16,6 +16,7 @@ const { assertReadOnlySql, assertReadOnlyPipeline } = require('../mcp/McpGateway
 const PORT = process.env.PORT || 3030;
 const BASE = `http://127.0.0.1:${PORT}`;
 const DB = 'gui_mongodb_e2e_mcp';
+const DROP_DB = 'gui_mongodb_e2e_mcp_drop';
 const CONN_NAME = 'e2e-mcp';
 const RW_NAME = 'e2e-mcp-rw';
 
@@ -230,6 +231,29 @@ async function newMcpClient() {
     const del2 = await call(mcp1.client, 'execute_write', { connection_id: cid2, db: DB, confirm_token: del1.ok ? del1.data.confirm_token : '' });
     assert(del1.ok && del2.ok && del2.data.result.deleted === 1, 'delete confermata ed eseguita');
 
+    console.log('14b. Fase 3: drop_collection e drop_database con conferma');
+    await mongo.db(DB).collection('scratch').insertOne({ tmp: 1 });
+    const dc1 = await call(mcp1.client, 'execute_write', { connection_id: cid2, db: DB, collection: 'scratch', operation: 'drop_collection' });
+    assert(dc1.ok && dc1.data.requires_confirmation && dc1.data.affected_estimate === 1, `drop_collection: anteprima con stima = ${dc1.ok ? dc1.data.affected_estimate : dc1.text}`);
+    const dc2 = await call(mcp1.client, 'execute_write', { connection_id: cid2, db: DB, confirm_token: dc1.data.confirm_token });
+    assert(dc2.ok && dc2.data.executed, 'drop_collection confermato ed eseguito');
+    const afterDc = await call(mcp1.client, 'get_databases_and_collections', { connection_id: cid2, db: DB });
+    assert(afterDc.ok && !afterDc.data.collections.some((c) => c.name === 'scratch'), 'collection "scratch" eliminata');
+    const dcNoColl = await call(mcp1.client, 'execute_write', { connection_id: cid2, db: DB, operation: 'drop_collection' });
+    assert(!dcNoColl.ok, 'drop_collection senza "collection" rifiutato');
+
+    await mongo.db(DROP_DB).collection('x').insertOne({ tmp: 1 });
+    const dd1 = await call(mcp1.client, 'execute_write', { connection_id: cid2, db: DROP_DB, operation: 'drop_database' });
+    assert(dd1.ok && dd1.data.requires_confirmation && dd1.data.affected_estimate === 1, 'drop_database: anteprima con numero di collection');
+    const dd2 = await call(mcp1.client, 'execute_write', { connection_id: cid2, db: DROP_DB, confirm_token: dd1.data.confirm_token });
+    assert(dd2.ok && dd2.data.executed, 'drop_database confermato ed eseguito');
+    const afterDd = await call(mcp1.client, 'get_databases_and_collections', { connection_id: cid2 });
+    assert(afterDd.ok && !afterDd.data.databases.some((d) => d.name === DROP_DB), `database "${DROP_DB}" eliminato`);
+
+    const ddSys1 = await call(mcp1.client, 'execute_write', { connection_id: cid2, db: 'admin', operation: 'drop_database' });
+    const ddSys2 = await call(mcp1.client, 'execute_write', { connection_id: cid2, db: 'admin', confirm_token: ddSys1.ok ? ddSys1.data.confirm_token : '' });
+    assert(ddSys1.ok && !ddSys2.ok && /sistema/i.test(ddSys2.text), 'drop_database su db di sistema bloccato dalla strategia');
+
     const qGuard = await call(mcp1.client, 'execute_query', { connection_id: cid2, db: DB, collection: 'people', pipeline: '[{ "$out": "x" }]' });
     assert(!qGuard.ok, 'execute_query resta di sola lettura anche su connessione scrivibile (policy per-tool)');
 
@@ -255,6 +279,7 @@ async function newMcpClient() {
     if (socket) socket.close();
     if (mongo) {
       await mongo.db(DB).dropDatabase().catch(() => {});
+      await mongo.db(DROP_DB).dropDatabase().catch(() => {});
       await mongo.close().catch(() => {});
     }
   }

@@ -58,8 +58,10 @@ function assertReadOnlySql(sql) {
   }
 }
 
-/* Fase 3: guardie del tool di scrittura (execute_write). Solo DML esplicito,
- * niente DDL; UPDATE e DELETE devono avere una clausola WHERE. */
+/* Fase 3: guardie del tool di scrittura (execute_write). Via SQL solo DML
+ * esplicito, niente DDL (i drop di database/collection passano dalle
+ * operation dedicate drop_database/drop_collection, valide per entrambi i
+ * dbType); UPDATE e DELETE devono avere una clausola WHERE. */
 const SQL_WRITE_START = /^\s*(insert|update|delete|replace)\b/i;
 const SQL_NEEDS_WHERE = /^\s*(update|delete)\b/i;
 
@@ -382,6 +384,23 @@ function buildMcpServer(session, deps) {
   // Valida gli argomenti e costruisce l'operazione di scrittura: { summary,
   // exec }. exec viene eseguita solo alla conferma.
   const buildWriteOp = (sess, args, db) => {
+    // Drop di collection/tabelle e database: valgono per entrambi i dbType
+    // (le strategie proteggono già i db/schemi di sistema).
+    const dropOp = String(args.operation || '').trim().toLowerCase();
+    if (dropOp === 'drop_collection') {
+      const coll = String(args.collection || '').trim();
+      if (!coll) throw new Error('Parametro "collection" mancante per drop_collection.');
+      return {
+        summary: { dbType: sess.dbType, db, collection: coll, operation: dropOp },
+        exec: async () => { await sess.strategy.dropCollection(db, coll); return { dropped: `${db}.${coll}` }; },
+      };
+    }
+    if (dropOp === 'drop_database') {
+      return {
+        summary: { dbType: sess.dbType, db, operation: dropOp },
+        exec: async () => { await sess.strategy.dropDatabase(db); return { dropped: db }; },
+      };
+    }
     if (sess.dbType === 'mysql') {
       const sql = String(args.sql || '').trim();
       if (!sql) throw new Error('Per MySQL usa il parametro "sql" con uno statement INSERT/UPDATE/DELETE/REPLACE.');
@@ -419,7 +438,7 @@ function buildMcpServer(session, deps) {
         exec: () => sess.strategy.collectionDeleteMany(db, coll, { filter: args.filter }),
       };
     }
-    throw new Error('Parametro "operation" mancante o non valido: usa "insert", "update" o "delete" (oppure "sql" su MySQL).');
+    throw new Error('Parametro "operation" mancante o non valido: usa "insert", "update", "delete", "drop_collection" o "drop_database" (per il DML su MySQL usa "sql").');
   };
 
   tool('execute_write', {
@@ -431,13 +450,15 @@ function buildMcpServer(session, deps) {
       'Mostra l\'anteprima all\'utente umano e chiedi la sua approvazione esplicita: solo dopo richiama con confirm_token. ' +
       'NON confermare mai di tua iniziativa. Il token scade dopo 5 minuti ed è monouso. ' +
       'MongoDB: "operation" (insert|update|delete) con "doc" (insert) o "filter"+"set" (update) o "filter" (delete), in Extended JSON; ' +
-      'filtri vuoti rifiutati. MySQL: "sql" con INSERT/UPDATE/DELETE/REPLACE (niente DDL); UPDATE/DELETE richiedono WHERE. ' +
+      'filtri vuoti rifiutati. MySQL: "sql" con INSERT/UPDATE/DELETE/REPLACE; UPDATE/DELETE richiedono WHERE. ' +
+      'Su entrambi i dbType "operation" ammette anche "drop_collection" (elimina la collection/tabella indicata) e ' +
+      '"drop_database" (elimina l\'intero database "db"); i db di sistema sono protetti. Nessun altro DDL è ammesso. ' +
       'Ogni richiesta ed esecuzione viene registrata in un audit log sul server.',
     inputSchema: {
       connection_id: z.string(),
       db: z.string().describe('Database (MySQL: schema) su cui operare'),
-      collection: z.string().optional().describe('Solo MongoDB: collection su cui operare'),
-      operation: z.enum(['insert', 'update', 'delete']).optional().describe('Solo MongoDB: tipo di scrittura'),
+      collection: z.string().optional().describe('Collection/tabella su cui operare (per MongoDB e per drop_collection)'),
+      operation: z.enum(['insert', 'update', 'delete', 'drop_collection', 'drop_database']).optional().describe('Tipo di scrittura: insert/update/delete solo MongoDB; drop_collection e drop_database per entrambi i dbType'),
       doc: z.string().optional().describe('Solo MongoDB insert: documento in Extended JSON'),
       filter: z.string().optional().describe('Solo MongoDB update/delete: filtro esplicito in Extended JSON (mai vuoto)'),
       set: z.string().optional().describe('Solo MongoDB update: campi da aggiornare ($set) in Extended JSON'),
@@ -477,12 +498,22 @@ function buildMcpServer(session, deps) {
     // Primo passo: validazione, anteprima e token di conferma.
     const op = buildWriteOp(sess, args, db);
 
-    // Stima best-effort dei documenti interessati (solo MongoDB update/delete).
+    // Stima best-effort dell'impatto: documenti interessati per update/delete
+    // (solo MongoDB) e drop_collection, numero di collection per drop_database.
     let affectedEstimate;
     if (op.summary.operation === 'update' || op.summary.operation === 'delete') {
       try {
         const probe = await sess.strategy.collectionFind(db, op.summary.collection, { filter: op.summary.filter, limit: 1 });
         affectedEstimate = probe.total;
+      } catch { /* la stima è facoltativa */ }
+    } else if (op.summary.operation === 'drop_collection') {
+      try {
+        const probe = await sess.strategy.collectionFind(db, op.summary.collection, { limit: 1 });
+        affectedEstimate = probe.total;
+      } catch { /* la stima è facoltativa */ }
+    } else if (op.summary.operation === 'drop_database') {
+      try {
+        affectedEstimate = (await sess.strategy.listCollections(db)).length;
       } catch { /* la stima è facoltativa */ }
     }
 
