@@ -1,4 +1,4 @@
-# DB Web GUI
+# CodeDB
 
 Un clone web di DBeaver **multi-database**: esplora database e collection/tabelle,
 visualizza i documenti/righe come una tabella, esegui query, modifica i dati.

@@ -648,7 +648,7 @@ async function startServer() {
 
   const HOST = process.env.HOST || '127.0.0.1';
   server.listen(PORT, HOST, () => {
-    console.log(`Mongo Web GUI in ascolto su http://${HOST}:${PORT}`);
+    console.log(`CodeDB in ascolto su http://${HOST}:${PORT}`);
     console.log(`Endpoint MCP (Streamable HTTP) su http://${HOST}:${PORT}/mcp`);
   });
 }

@@ -1,15 +1,24 @@
 :root {
-  --bg: #1e2227;
-  --bg-2: #23282e;
-  --bg-3: #2b3138;
-  --border: #3a4149;
-  --fg: #d7dce1;
-  --fg-dim: #8a939d;
-  --accent: #4caf7d;
-  --accent-2: #3d8f66;
-  --danger: #e05c5c;
-  --sel: #2f4d3d;
-  font-size: 14px;
+  /* Palette ispirata a VSCode Dark+ / Dark Modern */
+  --bg: #1e1e1e;          /* sfondo "editor" (workspace, griglia) */
+  --bg-2: #252526;        /* sidebar e pannelli */
+  --bg-3: #2d2d2d;        /* header di sezione, tab inattivi, superfici */
+  --bg-4: #333333;        /* activity-bar / hover di superfici scure */
+  --border: #2b2b2b;      /* bordi sottili tra pannelli */
+  --border-2: #3c3c3c;    /* bordi più marcati (input, tabelle) */
+  --fg: #cccccc;
+  --fg-dim: #8c8c8c;
+  --accent: #007acc;      /* blu iconico VSCode: tab attivo, selezioni, link */
+  --accent-2: #0e639c;    /* sfondo pulsanti primari */
+  --accent-hover: #1177bb;/* hover pulsanti primari */
+  --focus: #007fd4;       /* bordo di focus */
+  --danger: #f14c4c;
+  --sel: #094771;         /* selezione attiva nelle liste (blu VSCode) */
+  --hover: #2a2d2e;       /* hover righe/voci di lista */
+  --input-bg: #3c3c3c;    /* sfondo campi di input */
+  --btn-bg: #3a3d41;      /* pulsanti secondari */
+  --btn-hover: #45494e;   /* hover pulsanti secondari */
+  font-size: 13px;
 }
 
 * { box-sizing: border-box; }
@@ -21,6 +30,14 @@ html, body {
   color: var(--fg);
   font-family: "Segoe UI", system-ui, sans-serif;
 }
+
+/* Scrollbar sottili in stile VSCode */
+* { scrollbar-width: thin; scrollbar-color: rgba(121, 121, 121, 0.4) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(121, 121, 121, 0.4); border-radius: 0; border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: rgba(150, 150, 150, 0.7); background-clip: padding-box; border: 2px solid transparent; }
+::-webkit-scrollbar-corner { background: transparent; }
 
 .hidden { display: none !important; }
 
@@ -38,66 +55,75 @@ html, body {
 
 .modal {
   background: var(--bg-2);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 28px 32px;
+  border: 1px solid var(--border-2);
+  border-radius: 6px;
+  padding: 24px 28px;
   width: 420px;
   max-width: calc(100vw - 24px);
   max-height: calc(100vh - 24px);
   max-height: calc(100dvh - 24px);
   overflow-y: auto;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
 }
 
 .modal.wide { width: 640px; }
 
-.modal h1 { margin: 0 0 4px; font-size: 1.4rem; }
-.modal h2 { margin: 0 0 12px; font-size: 1.15rem; }
+.modal h1 { margin: 0 0 4px; font-size: 1.35rem; font-weight: 600; }
+.modal h2 { margin: 0 0 12px; font-size: 1.1rem; font-weight: 600; }
 .modal .subtitle { margin: 0 0 18px; color: var(--fg-dim); }
 
-.tabs { display: flex; gap: 4px; margin-bottom: 14px; }
+/* Tab in stile "underline" di VSCode */
+.tabs { display: flex; gap: 2px; margin-bottom: 14px; border-bottom: 1px solid var(--border-2); }
 
 .tab {
   flex: 1;
-  background: var(--bg-3);
+  background: transparent;
   color: var(--fg-dim);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 7px;
+  border: none;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  padding: 8px 7px;
+  margin-bottom: -1px;
   cursor: pointer;
 }
 
-.tab.active { background: var(--sel); color: var(--fg); border-color: var(--accent-2); }
+.tab:hover { color: var(--fg); border-color: transparent; }
+.tab.active { background: transparent; color: var(--fg); border-bottom-color: var(--accent); }
 
 .form-row { display: flex; gap: 10px; margin-bottom: 12px; }
 .form-row label { flex: 1; display: flex; flex-direction: column; gap: 4px; color: var(--fg-dim); font-size: 0.85rem; }
 .form-row label.small { flex: 0 0 110px; }
 
 input, select, textarea {
-  background: var(--bg);
+  background: var(--input-bg);
   color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 8px 10px;
+  border: 1px solid var(--border-2);
+  border-radius: 3px;
+  padding: 7px 9px;
   font-size: 0.95rem;
   outline: none;
 }
 
-input:focus, textarea:focus { border-color: var(--accent-2); }
+input:focus, select:focus, textarea:focus {
+  border-color: var(--focus);
+  outline: 1px solid var(--focus);
+  outline-offset: -1px;
+}
 
-textarea { width: 100%; font-family: Consolas, monospace; resize: vertical; }
+textarea { width: 100%; font-family: Consolas, "Cascadia Code", monospace; resize: vertical; }
 
 button {
-  background: var(--bg-3);
+  background: var(--btn-bg);
   color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 8px 14px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  padding: 7px 14px;
   cursor: pointer;
   font-size: 0.9rem;
 }
 
-button:hover { border-color: var(--accent-2); }
+button:hover { background: var(--btn-hover); border-color: transparent; }
+button:focus-visible { outline: 1px solid var(--focus); outline-offset: 1px; }
 
 button.primary {
   background: var(--accent-2);
@@ -106,10 +132,11 @@ button.primary {
   font-weight: 600;
 }
 
-button.primary:hover { background: var(--accent); }
+button.primary:hover { background: var(--accent-hover); }
 button.primary:disabled { opacity: 0.6; cursor: wait; }
 
-button.ghost { background: transparent; }
+button.ghost { background: transparent; border-color: transparent; }
+button.ghost:hover { background: var(--btn-bg); }
 
 .connect-actions { display: flex; gap: 8px; margin-top: 6px; }
 .connect-actions #connect-btn { flex: 1; }
@@ -117,10 +144,10 @@ button.ghost { background: transparent; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 
 .error {
-  background: rgba(224, 92, 92, 0.12);
+  background: rgba(241, 76, 76, 0.12);
   border: 1px solid var(--danger);
   color: #f1a3a3;
-  border-radius: 6px;
+  border-radius: 3px;
   padding: 8px 10px;
   margin: 10px 0;
   font-size: 0.85rem;
@@ -194,13 +221,35 @@ button.ghost { background: transparent; }
 header {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 8px 16px;
-  background: var(--bg-2);
+  gap: 12px;
+  padding: 6px 14px;
+  background: var(--bg-3);
   border-bottom: 1px solid var(--border);
 }
 
-.brand { font-weight: 700; }
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 0.95rem;
+  letter-spacing: 0.2px;
+}
+
+/* Logo mark: quadrato blu con "spina" tipo codicon database */
+.brand-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  background: linear-gradient(135deg, var(--accent) 0%, #005a9e 100%);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
 .conn-info { color: var(--fg-dim); font-size: 0.85rem; flex: 1; }
 
 .live-badge { color: var(--accent); font-size: 0.8rem; font-weight: 700; animation: pulse 2s infinite; }
@@ -258,8 +307,8 @@ header {
   text-overflow: ellipsis;
 }
 
-.node-label:hover { background: var(--bg-3); }
-.node-label.selected { background: var(--sel); }
+.node-label:hover { background: var(--hover); }
+.node-label.selected { background: var(--sel); box-shadow: inset 2px 0 0 var(--accent); }
 
 .node-label .count { margin-left: auto; color: var(--fg-dim); font-size: 0.75rem; }
 
@@ -291,15 +340,16 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .view-tabs { margin-left: auto; display: flex; gap: 4px; }
 
 .view-tab {
-  padding: 5px 14px;
-  border-radius: 6px;
-  background: var(--bg-3);
+  padding: 5px 12px;
+  border-radius: 3px;
+  background: transparent;
   color: var(--fg-dim);
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   font-size: 0.85rem;
 }
 
-.view-tab.active { background: var(--sel); color: var(--fg); border-color: var(--accent-2); }
+.view-tab:hover { background: var(--btn-bg); color: var(--fg); }
+.view-tab.active { background: var(--accent-2); color: #fff; border-color: var(--accent-2); }
 
 .view-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 
@@ -348,8 +398,8 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 
 #grid thead th:hover { color: var(--accent); }
 
-#grid tbody tr:nth-child(even) { background: var(--bg-2); }
-#grid tbody tr:hover { background: var(--sel); }
+#grid tbody tr:nth-child(even) { background: rgba(255, 255, 255, 0.02); }
+#grid tbody tr:hover { background: var(--hover); }
 
 #grid td.editable { cursor: cell; }
 
@@ -474,10 +524,11 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   left: 50%;
   transform: translateX(-50%);
   background: var(--bg-3);
-  border: 1px solid var(--accent-2);
-  border-radius: 8px;
+  border: 1px solid var(--border-2);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
   padding: 10px 18px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
   z-index: 200;
 }
 
@@ -493,15 +544,15 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   padding: 4px;
   min-width: 210px;
   background: var(--bg-3);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  border: 1px solid var(--border-2);
+  border-radius: 5px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
   font-size: 0.9rem;
 }
 
 .context-menu li {
   padding: 7px 12px;
-  border-radius: 5px;
+  border-radius: 3px;
   cursor: pointer;
   white-space: nowrap;
 }
@@ -572,16 +623,16 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .ac-list {
   position: absolute; left: 0; top: 100%; z-index: 50;
   margin: 2px 0 0; padding: 4px 0; list-style: none;
-  background: #111417; border: 1px solid var(--border);
+  background: var(--bg-3); border: 1px solid var(--border-2);
   border-radius: 4px; max-height: 220px; overflow-y: auto;
-  min-width: 180px; box-shadow: 0 8px 16px rgba(0,0,0,.6);
+  min-width: 180px; box-shadow: 0 6px 18px rgba(0,0,0,.6);
 }
 .ac-list li {
-  padding: 4px 10px; cursor: pointer; font-family: monospace;
+  padding: 4px 10px; cursor: pointer; font-family: Consolas, monospace;
 }
 .ac-list li.active,
 .ac-list li:hover {
-  background: var(--accent); color: #fff;
+  background: var(--sel); color: var(--fg);
 }
 
 /* ---------- Vista UML ---------- */
@@ -690,10 +741,10 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 #tab-bar {
   display: flex;
   align-items: stretch;
-  background: var(--bg);
+  background: var(--bg-3);
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
-  min-height: 34px;
+  min-height: 35px;
 }
 
 .conn-tab {
@@ -701,7 +752,9 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   align-items: center;
   gap: 7px;
   padding: 6px 10px 6px 12px;
+  background: var(--bg-3);
   border-right: 1px solid var(--border);
+  border-top: 1px solid transparent;
   color: var(--fg-dim);
   cursor: pointer;
   white-space: nowrap;
@@ -709,11 +762,11 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   font-size: 0.85rem;
 }
 
-.conn-tab:hover { background: var(--bg-2); }
+.conn-tab:hover { background: var(--bg-4); }
 .conn-tab.active {
-  background: var(--bg-2);
+  background: var(--bg);
   color: var(--fg);
-  box-shadow: inset 0 2px 0 var(--accent);
+  border-top-color: var(--accent);
 }
 
 .conn-tab .dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
@@ -753,10 +806,10 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .coll-tab-bar {
   display: flex;
   align-items: stretch;
-  background: var(--bg);
+  background: var(--bg-2);
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
-  min-height: 28px;
+  min-height: 30px;
   flex: 0 0 auto;
 }
 
@@ -766,6 +819,7 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   gap: 6px;
   padding: 4px 8px 4px 11px;
   border-right: 1px solid var(--border);
+  border-bottom: 2px solid transparent;
   color: var(--fg-dim);
   cursor: pointer;
   white-space: nowrap;
@@ -774,11 +828,11 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 }
 
 .coll-tab::before { content: "▤ "; opacity: 0.7; }
-.coll-tab:hover { background: var(--bg-2); }
+.coll-tab:hover { background: var(--bg-3); }
 .coll-tab.active {
-  background: var(--bg-2);
+  background: var(--bg);
   color: var(--fg);
-  box-shadow: inset 0 -2px 0 var(--accent-2);
+  border-bottom-color: var(--accent);
 }
 
 .coll-tab-close {
