@@ -152,9 +152,14 @@ class MySqlStrategy extends DbStrategy {
     const pool = this.requirePool();
     const name = String(db || '').trim();
     assertDbName(name);
-    const existing = await this.listDatabases();
-    if (existing.some((d) => d.name === name)) throw new Error(`Il database "${name}" esiste già.`);
-    await pool.query(`CREATE DATABASE ${qid(name)}`);
+    try {
+      await pool.query(`CREATE DATABASE ${qid(name)}`);
+    } catch (err) {
+      // Niente check preventivo via listDatabases() (costoso e soggetto a
+      // TOCTOU): si lascia decidere al motore e si traduce il suo errore.
+      if (err && err.code === 'ER_DB_CREATE_EXISTS') throw new Error(`Il database "${name}" esiste già.`);
+      throw err;
+    }
     // A differenza di MongoDB la prima tabella è facoltativa.
     const table = String(firstColl || '').trim();
     if (table) {
@@ -174,8 +179,6 @@ class MySqlStrategy extends DbStrategy {
     if (SYSTEM_SCHEMAS.has(from.toLowerCase())) {
       throw new Error(`Il database di sistema "${from}" non può essere rinominato.`);
     }
-    const existing = await this.listDatabases();
-    if (existing.some((d) => d.name === to)) throw new Error(`Il database "${to}" esiste già.`);
 
     // MySQL non supporta RENAME DATABASE: si crea il nuovo schema e si
     // spostano le tabelle con RENAME TABLE (le view non sono spostabili).
@@ -185,7 +188,14 @@ class MySqlStrategy extends DbStrategy {
       [from]
     );
     if (!tables.length) throw new Error('Il database non contiene tabelle da spostare.');
-    await pool.query(`CREATE DATABASE ${qid(to)}`);
+    try {
+      await pool.query(`CREATE DATABASE ${qid(to)}`);
+    } catch (err) {
+      // Niente check preventivo via listDatabases() (costoso e soggetto a
+      // TOCTOU): si lascia decidere al motore e si traduce il suo errore.
+      if (err && err.code === 'ER_DB_CREATE_EXISTS') throw new Error(`Il database "${to}" esiste già.`);
+      throw err;
+    }
     for (const t of tables) {
       await pool.query(`RENAME TABLE ${qtable(from, t.name)} TO ${qtable(to, t.name)}`);
     }
@@ -291,14 +301,21 @@ class MySqlStrategy extends DbStrategy {
     return ` ORDER BY ${t}`;
   }
 
-  async collectionFind(db, coll, payload) {
-    const pool = this.requirePool();
+  // Pezzi comuni di una SELECT su filter/sort/limit/skip liberi (usati sia
+  // dalla query dati vera e propria sia dal suo EXPLAIN).
+  buildSelect(db, coll, payload) {
     const where = String(payload.filter || '').trim();
     const whereSql = where ? ` WHERE ${where}` : '';
     const orderSql = this.buildOrderBy(payload.sort);
     const limit = Math.min(Math.max(parseInt(payload.limit, 10) || 50, 1), 500);
     const skip = Math.max(parseInt(payload.skip, 10) || 0, 0);
     const table = qtable(db, coll);
+    return { table, whereSql, orderSql, limit, skip };
+  }
+
+  async collectionFind(db, coll, payload) {
+    const pool = this.requirePool();
+    const { table, whereSql, orderSql, limit, skip } = this.buildSelect(db, coll, payload);
 
     const [rows, fields] = await pool.query(
       `SELECT * FROM ${table}${whereSql}${orderSql} LIMIT ? OFFSET ?`,
@@ -359,12 +376,8 @@ class MySqlStrategy extends DbStrategy {
       sql = String(payload.pipeline || '').trim();
       if (!sql) throw new Error('Inserisci una query SQL di cui mostrare il piano.');
     } else {
-      const where = String(payload.filter || '').trim();
-      const whereSql = where ? ` WHERE ${where}` : '';
-      const orderSql = this.buildOrderBy(payload.sort);
-      const limit = Math.min(Math.max(parseInt(payload.limit, 10) || 50, 1), 500);
-      const skip = Math.max(parseInt(payload.skip, 10) || 0, 0);
-      sql = `SELECT * FROM ${qtable(db, coll)}${whereSql}${orderSql} LIMIT ${limit} OFFSET ${skip}`;
+      const { table, whereSql, orderSql, limit, skip } = this.buildSelect(db, coll, payload);
+      sql = `SELECT * FROM ${table}${whereSql}${orderSql} LIMIT ${limit} OFFSET ${skip}`;
     }
 
     const conn = await pool.getConnection();
@@ -484,14 +497,50 @@ class MySqlStrategy extends DbStrategy {
   // come statement INSERT (format: 'sql') o come righe Extended JSON
   // (format: 'json', una riga-oggetto per riga di tabella: è il formato
   // dell'export di interi database, reimportabile con collectionImport).
-  // Paginazione con skip/limit.
+  // Paginazione keyset sulla chiave primaria (evita l'O(n²) di OFFSET su
+  // tabelle grandi): payload.after = EJSON dei valori PK dell'ultima riga
+  // ricevuta. Senza chiave primaria non esiste un ordinamento stabile su cui
+  // costruire un cursore, quindi si ripiega su skip/offset (comportamento
+  // precedente, invariato per questo caso).
   async collectionExport(db, coll, payload) {
     const pool = this.requirePool();
     const format = ['sql', 'json'].includes(payload.format) ? payload.format : 'csv';
     const limit = Math.min(Math.max(parseInt(payload.limit, 10) || 500, 1), 1000);
-    const skip = Math.max(parseInt(payload.skip, 10) || 0, 0);
     const table = qtable(db, coll);
-    const [rows, fields] = await pool.query(`SELECT * FROM ${table} LIMIT ? OFFSET ?`, [limit, skip]);
+    const pk = await this.primaryKey(db, coll);
+
+    let rows;
+    let fields;
+    let nextAfter = null;
+    if (pk.length) {
+      const pkCols = pk.map(qid).join(', ');
+      let whereSql = '';
+      let params = [];
+      if (payload.after != null && payload.after !== '') {
+        let afterVals;
+        try {
+          afterVals = parseClientValue(payload.after);
+        } catch {
+          throw new Error('Cursore di paginazione non valido.');
+        }
+        if (!Array.isArray(afterVals) || afterVals.length !== pk.length) {
+          throw new Error('Cursore di paginazione non valido.');
+        }
+        whereSql = ` WHERE (${pkCols}) > (${pk.map(() => '?').join(', ')})`;
+        params = afterVals.map(toSqlValue);
+      }
+      [rows, fields] = await pool.query(
+        `SELECT * FROM ${table}${whereSql} ORDER BY ${pkCols} LIMIT ?`,
+        [...params, limit]
+      );
+      if (rows.length) {
+        const last = rows[rows.length - 1];
+        nextAfter = EJSON.stringify(pk.map((c) => last[c]), { relaxed: true });
+      }
+    } else {
+      const skip = Math.max(parseInt(payload.skip, 10) || 0, 0);
+      [rows, fields] = await pool.query(`SELECT * FROM ${table} LIMIT ? OFFSET ?`, [limit, skip]);
+    }
     const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total FROM ${table}`);
     const columns = (fields || []).map((f) => f.name);
 
@@ -514,12 +563,17 @@ class MySqlStrategy extends DbStrategy {
       total: Number(total),
       format,
       header: format === 'csv' ? columns.map(MySqlStrategy.csvCell).join(',') : null,
+      nextAfter,
     };
   }
 
   // Importa un blocco di righe (payload.docs = array di oggetti Extended JSON
   // serializzati: relaxed = true produce i tipi JS nativi per i parametri
-  // SQL). Le righe vengono inserite una a una per contare ok/errori.
+  // SQL). Le righe con lo stesso insieme di colonne (stesso ordine, il caso
+  // comune quando arrivano da un export della stessa tabella) vengono
+  // raggruppate in un unico INSERT multi-VALUES, come già fa il restore dei
+  // backup; un batch che fallisce viene ripetuto riga per riga per isolare
+  // l'errore e non perdere le righe valide, mantenendo il report ok/errori.
   async collectionImport(db, coll, payload) {
     const pool = this.requirePool();
     const raw = Array.isArray(payload.docs) ? payload.docs : [];
@@ -527,6 +581,8 @@ class MySqlStrategy extends DbStrategy {
     const table = qtable(db, coll);
     let inserted = 0;
     const errors = [];
+
+    const parsed = [];
     for (let i = 0; i < raw.length; i++) {
       try {
         const row = EJSON.deserialize(raw[i], { relaxed: true });
@@ -535,15 +591,49 @@ class MySqlStrategy extends DbStrategy {
         }
         const cols = Object.keys(row);
         if (!cols.length) throw new Error('riga vuota');
-        await pool.query(
-          `INSERT INTO ${table} (${cols.map(qid).join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`,
-          cols.map((c) => toSqlValue(row[c]))
-        );
-        inserted += 1;
+        parsed.push({ i, cols, values: cols.map((c) => toSqlValue(row[c])) });
       } catch (err) {
         if (errors.length < 10) errors.push(`Riga ${i + 1}: ${(err && err.message) || err}`);
       }
     }
+
+    const BATCH_SIZE = 500;
+    const groups = [];
+    let cur = null;
+    for (const p of parsed) {
+      const sig = p.cols.join(' ');
+      if (cur && cur.sig === sig && cur.rows.length < BATCH_SIZE) {
+        cur.rows.push(p);
+      } else {
+        cur = { sig, cols: p.cols, rows: [p] };
+        groups.push(cur);
+      }
+    }
+
+    for (const g of groups) {
+      try {
+        const [res] = await pool.query(
+          `INSERT INTO ${table} (${g.cols.map(qid).join(', ')}) VALUES ?`,
+          [g.rows.map((r) => r.values)]
+        );
+        inserted += res.affectedRows;
+      } catch {
+        // Un vincolo violato da una sola riga fa fallire tutto il batch:
+        // si ripete riga per riga per isolare quale e non perdere le altre.
+        for (const r of g.rows) {
+          try {
+            await pool.query(
+              `INSERT INTO ${table} (${g.cols.map(qid).join(', ')}) VALUES (${g.cols.map(() => '?').join(', ')})`,
+              r.values
+            );
+            inserted += 1;
+          } catch (err) {
+            if (errors.length < 10) errors.push(`Riga ${r.i + 1}: ${(err && err.message) || err}`);
+          }
+        }
+      }
+    }
+
     return { inserted, failed: raw.length - inserted, errors };
   }
 

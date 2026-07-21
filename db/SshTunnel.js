@@ -12,6 +12,10 @@ const { Client } = require('ssh2');
  * sul lato remoto. La strategia DB si connette poi al capo locale del tunnel.
  * ------------------------------------------------------------------------- */
 
+function errText(err) {
+  return (err && err.message) || String(err);
+}
+
 // ssh = { sshHost, sshPort, sshUser, sshPassword, sshKeyFile, sshPassphrase }
 // target = { host, port } endpoint del DB raggiungibile dal server SSH.
 // Ritorna { host, port, close } dove host:port è il capo locale del tunnel.
@@ -29,10 +33,32 @@ function openSshTunnel(ssh, target) {
       reject(err instanceof Error ? err : new Error(String(err)));
     };
 
-    conn.on('error', fail);
+    // Stato del tunnel dopo l'apertura: se la connessione SSH cade a runtime
+    // (rete, timeout, chiusura remota), 'error'/'close' arrivano con
+    // settled già true, quindi `fail` non fa nulla — senza questo flag la
+    // strategia DB vedrebbe solo un ECONNREFUSED generico sulla porta locale
+    // ormai orfana, invece di un messaggio che spieghi che è il tunnel a
+    // essere caduto.
+    const tunnelState = { alive: true, lastError: null };
+
+    conn.on('error', (err) => {
+      if (settled) {
+        tunnelState.alive = false;
+        tunnelState.lastError = errText(err);
+        return;
+      }
+      fail(err);
+    });
+    conn.on('close', () => {
+      tunnelState.alive = false;
+    });
 
     conn.on('ready', () => {
       server = net.createServer((socket) => {
+        if (!tunnelState.alive) {
+          socket.destroy();
+          return;
+        }
         conn.forwardOut('127.0.0.1', socket.remotePort || 0, target.host, target.port, (err, stream) => {
           if (err) {
             socket.destroy();
@@ -50,6 +76,8 @@ function openSshTunnel(ssh, target) {
         resolve({
           host: '127.0.0.1',
           port,
+          get alive() { return tunnelState.alive; },
+          get lastError() { return tunnelState.lastError; },
           close() {
             try { server.close(); } catch { /* ignora */ }
             conn.end();

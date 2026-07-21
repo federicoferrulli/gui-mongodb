@@ -136,13 +136,21 @@ function loadConnections() {
   }
 }
 
-function saveConnections(sections) {
-  const toSave = JSON.parse(JSON.stringify(sections));
-  for (const sec of Object.values(toSave)) {
+// Cifra i segreti (password, credenziali SSH) di una copia profonda delle
+// sezioni, senza toccare l'originale: usata sia prima di riscrivere il file
+// sia prima di esportarlo, così i due percorsi restano un solo punto di verità.
+function encryptSections(sections) {
+  const copy = JSON.parse(JSON.stringify(sections));
+  for (const sec of Object.values(copy)) {
     for (const f of SECRET_FIELDS) {
       if (sec[f]) sec[f] = encryptSecret(sec[f]);
     }
   }
+  return copy;
+}
+
+function saveConnections(sections) {
+  const toSave = encryptSections(sections);
   // Prima di riscrivere, conserva le due versioni precedenti (.bak e .bak2):
   // il file è l'unica copia dei segreti sul disco e la migrazione all'avvio con
   // una passphrase sbagliata li azzererebbe; due generazioni proteggono anche
@@ -202,13 +210,17 @@ function connLabel(cfg) {
 // (non vengono mai rimandati al browser, quindi il client non può reinviarli).
 function resolveEffectiveCfg(cfg) {
   let effective = cfg;
+  // Un solo caricamento del file: sia "saved" che "keepPasswordFrom" leggono
+  // dalla stessa mappa in memoria, evitando due letture/decifrature ridondanti.
+  const needsLookup = cfg.saved || cfg.keepPasswordFrom;
+  const conns = needsLookup ? loadConnections() : null;
   if (cfg.saved) {
-    const saved = loadConnections()[cfg.saved];
+    const saved = conns[cfg.saved];
     if (!saved) throw new Error(`Connessione salvata "${cfg.saved}" non trovata.`);
     effective = saved;
   }
   if (cfg.keepPasswordFrom) {
-    const prev = loadConnections()[cfg.keepPasswordFrom];
+    const prev = conns[cfg.keepPasswordFrom];
     if (prev) {
       const merged = { ...effective };
       for (const f of SECRET_FIELDS) {
@@ -378,7 +390,18 @@ io.on('connection', (socket) => {
         cb({ ok: false, error: 'Nessuna connessione attiva al database.' });
         return;
       }
-      cb({ ok: true, ...(await fn(sess.strategy, payload)) });
+      try {
+        cb({ ok: true, ...(await fn(sess.strategy, payload)) });
+      } catch (err) {
+        // Se il tunnel SSH è caduto dopo l'apertura, la strategia vede solo
+        // un errore di rete generico verso la porta locale ormai orfana:
+        // qui lo si riconosce e si dà un messaggio chiaro invece di quello
+        // del driver DB.
+        if (sess.tunnel && !sess.tunnel.alive) {
+          throw new Error(`Tunnel SSH caduto${sess.tunnel.lastError ? `: ${sess.tunnel.lastError}` : '.'}`);
+        }
+        throw err;
+      }
     });
   }
 
@@ -499,12 +522,7 @@ io.on('connection', (socket) => {
   safeOn('connections:export', (_payload, cb) => {
     const conns = loadConnections();
     if (!Object.keys(conns).length) throw new Error('Nessuna connessione salvata da esportare.');
-    const toSave = JSON.parse(JSON.stringify(conns));
-    for (const sec of Object.values(toSave)) {
-      for (const f of SECRET_FIELDS) {
-        if (sec[f]) sec[f] = encryptSecret(sec[f]);
-      }
-    }
+    const toSave = encryptSections(conns);
     cb({ ok: true, ini: stringifyIni(toSave) });
   });
 

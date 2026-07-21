@@ -30,16 +30,18 @@ function downloadBlob(text, filename, mime) {
 // format: 'json' (MongoDB), 'csv' o 'sql' (MySQL).
 export async function exportCollection(db, coll, format) {
   const lines = [];
-  let skip = 0;
+  let skip = 0; // ripiego per tabelle MySQL senza chiave primaria
+  let after = null; // cursore keyset (Mongo sempre, MySQL con PK)
   let total = 0;
   let header = null;
   try {
     for (;;) {
-      const res = await emit('collection:export', { db, coll, skip, limit: CHUNK, format });
+      const res = await emit('collection:export', { db, coll, skip, after, limit: CHUNK, format });
       total = res.total;
       if (header == null && res.header != null) header = res.header;
       lines.push(...res.lines);
       skip += res.count;
+      after = res.nextAfter != null ? res.nextAfter : after;
       toast(`Esportazione di "${coll}"… ${Math.min(skip, total)}/${total}`);
       if (res.count < CHUNK || skip >= total) break;
     }
@@ -344,10 +346,12 @@ export async function exportDatabase(db) {
       }
       const lines = [];
       let skip = 0;
+      let after = null;
       for (;;) {
-        const res = await emit('collection:export', { db, coll: c.name, skip, limit: CHUNK, format: 'json' });
+        const res = await emit('collection:export', { db, coll: c.name, skip, after, limit: CHUNK, format: 'json' });
         lines.push(...res.lines);
         skip += res.count;
+        after = res.nextAfter != null ? res.nextAfter : after;
         toast(`Esportazione di "${db}"… ${c.name}: ${Math.min(skip, res.total)}/${res.total}`);
         if (res.count < CHUNK || skip >= res.total) break;
       }

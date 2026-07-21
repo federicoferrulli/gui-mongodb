@@ -143,7 +143,7 @@ async function dumpMySql({ strategy, db, collections, since, sinceField, backupD
           where = ` WHERE ${mysql.escapeId(sinceColumn, true)} > FROM_UNIXTIME(?)`;
           params.push(Math.floor(new Date(since).getTime() / 1000));
         } else {
-          notes.push(`"${table}": nessuna colonna data utilizzabile — inclusa per intero nel backup ${'incrementale'}.`);
+          notes.push(`"${table}": nessuna colonna data utilizzabile — inclusa per intero nel backup incrementale.`);
         }
       }
 

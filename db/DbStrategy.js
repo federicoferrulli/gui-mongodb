@@ -96,7 +96,8 @@ class DbStrategy {
 
   /**
    * Esporta un blocco di documenti/righe come righe di testo già formattate
-   * (paginato con skip/limit): { lines, count, total, header? }.
+   * (paginazione keyset con payload.after/limit, skip come ripiego se non
+   * esiste un ordinamento stabile): { lines, count, total, header?, nextAfter }.
    */
   async collectionExport(_db, _coll, _payload) { throw unsupported(); }
 

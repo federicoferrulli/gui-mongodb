@@ -15,12 +15,17 @@ function formatDuration(ms) {
   return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
 }
 
+const MAX_LOG_BYTES = 5 * 1024 * 1024; // oltre, si ruota un file .1 per non crescere indefinitamente
+
 function createLogger(logFile, { quiet = false } = {}) {
   fs.mkdirSync(path.dirname(logFile), { recursive: true });
 
   function write(level, msg) {
     const line = `[${new Date().toISOString()}] ${level} ${msg}`;
     try {
+      let stats = null;
+      try { stats = fs.statSync(logFile); } catch { /* non esiste ancora */ }
+      if (stats && stats.size > MAX_LOG_BYTES) fs.renameSync(logFile, `${logFile}.1`);
       fs.appendFileSync(logFile, line + '\n', 'utf8');
     } catch { /* il log non deve mai far fallire l'operazione */ }
     if (!quiet) {

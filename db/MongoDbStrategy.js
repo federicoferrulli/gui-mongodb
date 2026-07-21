@@ -129,6 +129,20 @@ function errMsgSafe(err) {
   return (err && err.message) || String(err);
 }
 
+// Ripiego quando manca il permesso listDatabases: prova a leggere il nome
+// del db dalla URI di connessione. Le URI reali possono contenere caratteri
+// che new URL() rifiuta (credenziali non percent-encoded, host particolari):
+// in tal caso torna null invece di lanciare, per non rompere il ripiego con
+// un errore diverso da quello originale.
+function dbNameFromUri(uri) {
+  try {
+    const name = new URL(String(uri || '').replace(/^mongodb(\+srv)?:\/\//, 'http://')).pathname.replace('/', '');
+    return name || null;
+  } catch {
+    return null;
+  }
+}
+
 function assertDbName(name) {
   if (!name || /[\\/. "$*<>:|?]/.test(name)) {
     throw new Error(`Nome di database non valido: "${name}"`);
@@ -237,7 +251,7 @@ class MongoDbStrategy extends DbStrategy {
       return res.databases.map((d) => ({ name: d.name, sizeOnDisk: d.sizeOnDisk }));
     } catch {
       // User may lack listDatabases permission: fall back to the db in the URI.
-      const dbName = new URL(this.uri.replace(/^mongodb(\+srv)?:\/\//, 'http://')).pathname.replace('/', '');
+      const dbName = dbNameFromUri(this.uri);
       return dbName ? [{ name: dbName, sizeOnDisk: 0 }] : [];
     }
   }
@@ -251,7 +265,7 @@ class MongoDbStrategy extends DbStrategy {
       const res = await client.db('admin').admin().listDatabases({ nameOnly: false });
       databases = res.databases || [];
     } catch {
-      const dbName = new URL(this.uri.replace(/^mongodb(\+srv)?:\/\//, 'http://')).pathname.replace('/', '');
+      const dbName = dbNameFromUri(this.uri);
       if (dbName) databases = [{ name: dbName }];
     }
 
@@ -305,8 +319,17 @@ class MongoDbStrategy extends DbStrategy {
     // MongoDB non supporta la rinomina diretta: copia ogni collection nel
     // nuovo db ($out cross-database, MongoDB >= 4.4) e poi elimina l'originale.
     const source = client.db(from);
-    const colls = (await source.listCollections({}, { nameOnly: true }).toArray())
-      .filter((c) => c.type !== 'view');
+    const allColls = await source.listCollections({}, { nameOnly: true }).toArray();
+    const colls = allColls.filter((c) => c.type !== 'view');
+    const views = allColls.filter((c) => c.type === 'view');
+    if (views.length) {
+      // $out non copia le view: proseguendo, il drop del db sorgente le
+      // farebbe sparire in silenzio. Meglio rifiutare che perdere dati.
+      throw new Error(
+        `Il database contiene ${views.length} view (${views.map((v) => v.name).join(', ')}) ` +
+        'che non possono essere copiate nel nuovo nome: eliminale o ricreale manualmente prima di rinominare.'
+      );
+    }
     if (!colls.length) throw new Error('Il database non contiene collection da copiare.');
     for (const c of colls) {
       await source.collection(c.name)
@@ -667,17 +690,30 @@ class MongoDbStrategy extends DbStrategy {
 
   // Esporta un blocco di documenti come righe EJSON (una per documento):
   // il client li assembla in un array JSON. Paginazione con skip/limit.
+  // Paginazione keyset su _id (sempre presente e indicizzato): evita la
+  // scansione O(n²) di skip su collection grandi. payload.after = EJSON
+  // (relaxed:false) dell'ultimo _id ricevuto; omesso per la prima pagina.
   async collectionExport(db, coll, payload) {
     const client = this.requireClient();
     const limit = Math.min(Math.max(parseInt(payload.limit, 10) || 500, 1), 1000);
-    const skip = Math.max(parseInt(payload.skip, 10) || 0, 0);
     const collection = client.db(db).collection(coll);
-    const docs = await collection.find({}).skip(skip).limit(limit).toArray();
+    const filter = {};
+    if (payload.after != null && payload.after !== '') {
+      let afterId;
+      try {
+        afterId = EJSON.parse(String(payload.after), { relaxed: false });
+      } catch {
+        throw new Error('Cursore di paginazione non valido.');
+      }
+      filter._id = { $gt: afterId };
+    }
+    const docs = await collection.find(filter).sort({ _id: 1 }).limit(limit).toArray();
     // relaxed: i numeri restano numeri, ObjectId/Date restano $oid/$date,
     // così il file riesportato si può reimportare senza perdita di tipi.
     const lines = docs.map((d) => EJSON.stringify(d, { relaxed: true }));
     const total = await collection.countDocuments();
-    return { lines, count: docs.length, total, format: 'json' };
+    const nextAfter = docs.length ? EJSON.stringify(docs[docs.length - 1]._id, { relaxed: false }) : null;
+    return { lines, count: docs.length, total, format: 'json', nextAfter };
   }
 
   // Importa un blocco di documenti (payload.docs = array di oggetti Extended
@@ -717,7 +753,11 @@ class MongoDbStrategy extends DbStrategy {
   }
 
   // Change stream: richiede un replica set; su server standalone degrada
-  // segnalando onUnavailable.
+  // segnalando onUnavailable. Un solo stream per sessione: aprirne uno nuovo
+  // chiude il precedente (this.unwatch()), quindi con più coll-tab aperti
+  // nella stessa connessione solo l'ultimo watch avviato risulta "LIVE".
+  // Scelta deliberata per limitare i change stream aperti per sessione
+  // (ognuno è una connessione persistente lato server Mongo), non un bug.
   watch(db, coll, { onChange, onUnavailable }) {
     const client = this.requireClient();
     this.unwatch();

@@ -94,11 +94,43 @@ function readCatalog(groupDir) {
   }
 }
 
-function appendToCatalog(groupDir, entry) {
-  const catalog = readCatalog(groupDir);
-  catalog.backups.push(entry);
+// Lock a file (creazione esclusiva, atomica su tutti gli OS supportati) per
+// serializzare le scritture concorrenti al catalogo: un backup via CLI e uno
+// via MCP sullo stesso gruppo altrimenti possono leggere lo stesso catalogo
+// prima l'uno della scrittura dell'altro e perdersi una voce (read-modify-write).
+function acquireCatalogLock(groupDir, timeoutMs = 5000) {
   fs.mkdirSync(groupDir, { recursive: true });
-  fs.writeFileSync(path.join(groupDir, 'catalog.json'), JSON.stringify(catalog, null, 2), 'utf8');
+  const lockFile = path.join(groupDir, '.catalog.lock');
+  const start = Date.now();
+  for (;;) {
+    try {
+      fs.closeSync(fs.openSync(lockFile, 'wx'));
+      return lockFile;
+    } catch (err) {
+      if (err.code !== 'EEXIST') throw err;
+      if (Date.now() - start > timeoutMs) {
+        // Lock stantio (processo terminato senza rilasciarlo): lo forza.
+        try { fs.unlinkSync(lockFile); } catch { /* già rimosso da un altro */ }
+        continue;
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+    }
+  }
+}
+
+function releaseCatalogLock(lockFile) {
+  try { fs.unlinkSync(lockFile); } catch { /* già rilasciato */ }
+}
+
+function appendToCatalog(groupDir, entry) {
+  const lockFile = acquireCatalogLock(groupDir);
+  try {
+    const catalog = readCatalog(groupDir);
+    catalog.backups.push(entry);
+    fs.writeFileSync(path.join(groupDir, 'catalog.json'), JSON.stringify(catalog, null, 2), 'utf8');
+  } finally {
+    releaseCatalogLock(lockFile);
+  }
 }
 
 function readManifest(backupDir) {

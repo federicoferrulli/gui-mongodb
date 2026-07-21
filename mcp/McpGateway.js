@@ -123,10 +123,18 @@ function assertReadOnlyPipeline(pipelineText) {
  * ------------------------------------------------------------------------- */
 
 const AUDIT_FILE = path.join(__dirname, '..', 'mcp-audit.log');
+const AUDIT_MAX_BYTES = 5 * 1024 * 1024; // oltre, si ruota un file .1 per non crescere indefinitamente
 
 function audit(entry) {
   const line = JSON.stringify({ ts: new Date().toISOString(), ...entry });
-  fs.appendFile(AUDIT_FILE, line + '\n', () => { /* l'audit non deve mai bloccare */ });
+  const append = () => fs.appendFile(AUDIT_FILE, line + '\n', () => { /* l'audit non deve mai bloccare */ });
+  fs.stat(AUDIT_FILE, (err, stats) => {
+    if (!err && stats.size > AUDIT_MAX_BYTES) {
+      fs.rename(AUDIT_FILE, `${AUDIT_FILE}.1`, append);
+    } else {
+      append();
+    }
+  });
 }
 
 /* ---------------------------------------------------------------------------
@@ -139,17 +147,39 @@ function mermaidId(name) {
   return String(name || '').replace(/[^A-Za-z0-9_]/g, '_') || '_';
 }
 
+// Come mermaidId, ma disambigua le collisioni tra nomi diversi che si
+// riducono allo stesso identificatore sanitizzato (es. "a-b" e "a_b" → "a_b"):
+// senza questo, il diagramma li fonderebbe in una sola entità. Va usato con
+// la stessa istanza per tutti i nomi di collection di uno stesso schema, così
+// i riferimenti nelle relazioni restano coerenti con le entità dichiarate.
+function makeMermaidEntityIdResolver() {
+  const used = new Set();
+  const cache = new Map();
+  return function entityId(name) {
+    if (cache.has(name)) return cache.get(name);
+    const base = mermaidId(name);
+    let id = base;
+    let n = 2;
+    while (used.has(id)) id = `${base}_${n++}`;
+    used.add(id);
+    cache.set(name, id);
+    return id;
+  };
+}
+
 function renderSchemaMarkdown(db, schema) {
+  const entityId = makeMermaidEntityIdResolver();
+  for (const c of schema.collections) entityId(c.name); // popola il resolver nell'ordine dello schema
   const lines = [`# Schema di \`${db}\``, '', '## Diagramma UML (Mermaid)', '', '```mermaid', 'erDiagram'];
   for (const c of schema.collections) {
-    lines.push(`  ${mermaidId(c.name)} {`);
+    lines.push(`  ${entityId(c.name)} {`);
     for (const f of c.fields) {
       lines.push(`    ${mermaidId(f.types.join('_'))} ${mermaidId(f.name)}`);
     }
     lines.push('  }');
   }
   for (const r of schema.relations) {
-    lines.push(`  ${mermaidId(r.from)} ${r.many ? '}o--o{' : '}o--||'} ${mermaidId(r.to)} : "${r.field}"`);
+    lines.push(`  ${entityId(r.from)} ${r.many ? '}o--o{' : '}o--||'} ${entityId(r.to)} : "${r.field}"`);
   }
   lines.push('```', '', '## Dizionario dati', '');
   for (const c of schema.collections) {
@@ -392,6 +422,39 @@ function buildMcpServer(session, deps) {
     }
   };
 
+  // Helper condiviso per il flusso di conferma a due passaggi, usato da
+  // execute_write, set_connection_read_only e restore_backup: genera il token
+  // monouso del primo passo (anteprima) e lo consuma al secondo, eseguendo
+  // l'operazione reale solo se il token è dello stesso kind e riferito alla
+  // stessa richiesta (matches). Il token è monouso per evitare che un secondo
+  // invio accidentale (retry del client, doppio click umano) esegua due volte
+  // una scrittura o un restore.
+  const confirmFlow = {
+    // Secondo passo: valida e consuma il token del primo passo.
+    consume(token, kind, matches, mismatchNoun) {
+      const pending = session.pendingWrites.get(token);
+      if (!pending || pending.kind !== kind || !matches(pending)) {
+        throw new Error(`confirm_token sconosciuto, scaduto o di un'altra ${mismatchNoun}: ripeti la richiesta senza token.`);
+      }
+      session.pendingWrites.delete(token); // monouso
+      return pending;
+    },
+    // Primo passo: registra l'operazione in sospeso e restituisce anteprima +
+    // token di conferma, con le istruzioni per l'AI (mai auto-confermare).
+    issue(kind, data, { toolName, preview, extra }) {
+      const confirmToken = crypto.randomUUID();
+      session.pendingWrites.set(confirmToken, { kind, ...data, expiresAt: Date.now() + CONFIRM_TTL_MS });
+      return jsonResult({
+        requires_confirmation: true,
+        confirm_token: confirmToken,
+        expires_in_seconds: CONFIRM_TTL_MS / 1000,
+        preview,
+        ...(extra || {}),
+        istruzioni: `Mostra l'anteprima all'utente umano e chiedi conferma esplicita. Solo se l'utente approva, richiama ${toolName} con questo confirm_token. Se l'utente rifiuta, non richiamare il tool.`,
+      });
+    },
+  };
+
   // Valida gli argomenti e costruisce l'operazione di scrittura: { summary,
   // exec }. exec viene eseguita solo alla conferma.
   const buildWriteOp = (sess, args, db) => {
@@ -491,11 +554,7 @@ function buildMcpServer(session, deps) {
     // Secondo passo: esecuzione dell'operazione registrata col token.
     const token = String(args.confirm_token || '').trim();
     if (token) {
-      const pending = session.pendingWrites.get(token);
-      if (!pending || pending.kind !== 'write' || pending.connectionId !== String(args.connection_id)) {
-        throw new Error('confirm_token sconosciuto, scaduto o di un\'altra connessione: ripeti la richiesta senza token.');
-      }
-      session.pendingWrites.delete(token); // monouso
+      const pending = confirmFlow.consume(token, 'write', (p) => p.connectionId === String(args.connection_id), 'connessione');
       try {
         const result = await pending.exec();
         audit({ ...auditBase, event: 'executed', ...pending.summary, result });
@@ -528,22 +587,11 @@ function buildMcpServer(session, deps) {
       } catch { /* la stima è facoltativa */ }
     }
 
-    const confirmToken = crypto.randomUUID();
-    session.pendingWrites.set(confirmToken, {
-      kind: 'write',
-      connectionId: String(args.connection_id),
-      exec: op.exec,
-      summary: op.summary,
-      expiresAt: Date.now() + CONFIRM_TTL_MS,
-    });
     audit({ ...auditBase, event: 'requested', ...op.summary, affectedEstimate });
-    return jsonResult({
-      requires_confirmation: true,
-      confirm_token: confirmToken,
-      expires_in_seconds: CONFIRM_TTL_MS / 1000,
+    return confirmFlow.issue('write', { connectionId: String(args.connection_id), exec: op.exec, summary: op.summary }, {
+      toolName: 'execute_write',
       preview: op.summary,
-      ...(affectedEstimate != null ? { affected_estimate: affectedEstimate } : {}),
-      istruzioni: 'Mostra l\'anteprima all\'utente umano e chiedi conferma esplicita. Solo se l\'utente approva, richiama execute_write con questo confirm_token. Se l\'utente rifiuta, non richiamare il tool.',
+      extra: affectedEstimate != null ? { affected_estimate: affectedEstimate } : undefined,
     });
   });
 
@@ -578,11 +626,7 @@ function buildMcpServer(session, deps) {
     // Secondo passo: applica la modifica registrata col token.
     const token = String(args.confirm_token || '').trim();
     if (token) {
-      const pending = session.pendingWrites.get(token);
-      if (!pending || pending.kind !== 'ini' || pending.name !== name) {
-        throw new Error('confirm_token sconosciuto, scaduto o di un\'altra richiesta: ripeti la richiesta senza token.');
-      }
-      session.pendingWrites.delete(token); // monouso
+      const pending = confirmFlow.consume(token, 'ini', (p) => p.name === name, 'richiesta');
       try {
         deps.setConnectionReadOnly(name, pending.readOnly);
         audit({ ...auditBase, event: 'executed', readOnly: pending.readOnly });
@@ -608,20 +652,10 @@ function buildMcpServer(session, deps) {
     if (current === args.read_only) {
       return jsonResult({ changed: false, connection: name, readOnly: current, message: 'Il flag ha già il valore richiesto: nessuna modifica necessaria.' });
     }
-    const confirmToken = crypto.randomUUID();
-    session.pendingWrites.set(confirmToken, {
-      kind: 'ini',
-      name,
-      readOnly: args.read_only,
-      expiresAt: Date.now() + CONFIRM_TTL_MS,
-    });
     audit({ ...auditBase, event: 'requested', readOnly: args.read_only });
-    return jsonResult({
-      requires_confirmation: true,
-      confirm_token: confirmToken,
-      expires_in_seconds: CONFIRM_TTL_MS / 1000,
+    return confirmFlow.issue('ini', { name, readOnly: args.read_only }, {
+      toolName: 'set_connection_read_only',
       preview: { connection: name, readOnly: { da: current, a: args.read_only } },
-      istruzioni: 'Mostra l\'anteprima all\'utente umano e chiedi conferma esplicita. Solo se l\'utente approva, richiama set_connection_read_only con questo confirm_token. Se l\'utente rifiuta, non richiamare il tool.',
     });
   });
 
@@ -745,11 +779,7 @@ function buildMcpServer(session, deps) {
     // Secondo passo: esecuzione del restore registrato col token.
     const token = String(args.confirm_token || '').trim();
     if (token) {
-      const pending = session.pendingWrites.get(token);
-      if (!pending || pending.kind !== 'restore' || pending.connectionId !== String(args.connection_id)) {
-        throw new Error('confirm_token sconosciuto, scaduto o di un\'altra connessione: ripeti la richiesta senza token.');
-      }
-      session.pendingWrites.delete(token); // monouso
+      const pending = confirmFlow.consume(token, 'restore', (p) => p.connectionId === String(args.connection_id), 'connessione');
       const log = createLogger(path.join(BACKUP_ROOT, 'backup.log'), { quiet: true });
       try {
         const summary = await log.run(`restore conn=${sess.name} da=${group}/${backupId} (via MCP)`, () => runRestore({
@@ -780,28 +810,17 @@ function buildMcpServer(session, deps) {
       ? String(args.collections).split(',').map((s) => s.trim()).filter(Boolean)
       : null;
     const targetDb = String(args.target_db || '').trim() || first.db;
-    const confirmToken = crypto.randomUUID();
-    session.pendingWrites.set(confirmToken, {
-      kind: 'restore',
-      connectionId: String(args.connection_id),
-      backupDir,
-      targetDb,
-      onlyCollections,
-      drop: !!args.drop,
-      expiresAt: Date.now() + CONFIRM_TTL_MS,
-    });
     audit({ ...auditBase, event: 'requested', targetDb });
-    return jsonResult({
-      requires_confirmation: true,
-      confirm_token: confirmToken,
-      expires_in_seconds: CONFIRM_TTL_MS / 1000,
+    return confirmFlow.issue('restore', {
+      connectionId: String(args.connection_id), backupDir, targetDb, onlyCollections, drop: !!args.drop,
+    }, {
+      toolName: 'restore_backup',
       preview: {
         catena: chain.map((l) => l.manifest.id),
         target_db: targetDb,
         collections: onlyCollections || 'tutte',
         drop: !!args.drop,
       },
-      istruzioni: 'Mostra l\'anteprima all\'utente umano e chiedi conferma esplicita. Solo se l\'utente approva, richiama restore_backup con questo confirm_token. Se l\'utente rifiuta, non richiamare il tool.',
     });
   });
 
