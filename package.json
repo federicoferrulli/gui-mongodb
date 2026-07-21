@@ -2,6 +2,7 @@
   "name": "mongo-web-gui",
   "version": "1.0.0",
   "description": "DBeaver-like web GUI for MongoDB with real-time socket updates",
+  "license": "AGPL-3.0-only",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

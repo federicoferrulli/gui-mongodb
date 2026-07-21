@@ -162,5 +162,14 @@ npm run backup -- help    # guida completa
 - `CLAUDE.md` / `AGENT.md` — guida all'architettura per gli agenti di coding.
 - `strategy_db.md` — piano storico di estensione multi-database (MongoDB & MySQL).
 - `strategy_mcp.md` — piano e stato dell'integrazione MCP (Fasi 1–3 + estensioni).
+
+## Licenza
+
+Copyright (c) 2026 Federico Ferrulli.
+
+Questo progetto è distribuito sotto licenza **GNU AGPL v3 (GNU Affero General Public License)**, ideale per il modello a doppia licenza (Open Source per uso cooperativo / Licenza Commerciale privata). Vedi il file [LICENSE.md](LICENSE.md) per il testo completo.
+
+
+
 </content>
 </invoke>
