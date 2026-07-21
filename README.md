@@ -1,6 +1,7 @@
 <p align="center">
-  <img src="public/codedb.png" alt="CodeDB Logo" width="96" />
+  <img src="public/logo.png" alt="CodeDB Logo" width="128" />
 </p>
+
 
 # CodeDB
 
