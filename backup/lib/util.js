@@ -36,8 +36,8 @@ function createFileSink(filePath, { compress = true, level = 6 } = {}) {
     entry.pipe(counter);
   }
   return {
-    async writeLine(line) {
-      if (!entry.write(line + '\n')) await once(entry, 'drain');
+    writeLine(line) {
+      if (!entry.write(line + '\n')) return once(entry, 'drain');
     },
     async close() {
       entry.end();
