@@ -196,8 +196,9 @@ class MySqlStrategy extends DbStrategy {
       if (err && err.code === 'ER_DB_CREATE_EXISTS') throw new Error(`Il database "${to}" esiste già.`);
       throw err;
     }
-    for (const t of tables) {
-      await pool.query(`RENAME TABLE ${qtable(from, t.name)} TO ${qtable(to, t.name)}`);
+    if (tables.length > 0) {
+      const renameParts = tables.map((t) => `${qtable(from, t.name)} TO ${qtable(to, t.name)}`);
+      await pool.query(`RENAME TABLE ${renameParts.join(', ')}`);
     }
     await pool.query(`DROP DATABASE ${qid(from)}`);
   }
