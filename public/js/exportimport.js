@@ -502,7 +502,7 @@ async function runDbImport() {
       }
 
       // MongoDB: ricrea gli indici della collection (dopo i dati).
-      for (const idx of c.indexes || []) {
+      await Promise.all((c.indexes || []).map(async (idx) => {
         try {
           await emit('index:create', {
             db: target, coll: c.name,
@@ -511,7 +511,7 @@ async function runDbImport() {
         } catch (err) {
           pushErr(`${c.name}, indice "${idx.name}": ${err.message}`);
         }
-      }
+      }));
     }
   } catch (err) {
     pushErr(err.message);
