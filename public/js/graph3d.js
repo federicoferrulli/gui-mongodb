@@ -1,6 +1,6 @@
 import { state } from './state.js';
 import { $, emit, esc, notify } from './utils.js';
-import { selectCollection } from './grid.js';
+import { openCollTab } from './colltabs.js';
 import { setView } from './main.js';
 
 let graphInstance = null;
@@ -162,8 +162,8 @@ function showTableDetailsPanel(tableName) {
 
   // Sezione Azioni Rapide
   html += `<div class="side-panel-actions">
-    <button type="button" id="panel-btn-open-grid" class="primary" style="flex:1;">▤ Griglia Dati</button>
-    <button type="button" id="panel-btn-open-uml" class="ghost" style="flex:1;">◫ Vista UML</button>
+    <button type="button" id="panel-btn-open-grid" class="primary" style="flex:1;">▤ Apri Tab Dati</button>
+    <button type="button" id="panel-btn-open-uml" class="ghost" style="flex:1;">◫ Apri Tab UML</button>
   </div>`;
 
   content.innerHTML = html;
@@ -188,21 +188,25 @@ function showTableDetailsPanel(tableName) {
     });
   });
 
-  // Event listener per "Griglia Dati"
+  // Event listener per "Apri Tab Dati"
   const openGridBtn = $('#panel-btn-open-grid');
   if (openGridBtn) {
     openGridBtn.addEventListener('click', () => {
-      selectCollection(tableName);
-      setView('data');
+      if (state.db) {
+        openCollTab(state.db, tableName);
+        setView('data');
+      }
     });
   }
 
-  // Event listener per "Vista UML"
+  // Event listener per "Apri Tab UML"
   const openUmlBtn = $('#panel-btn-open-uml');
   if (openUmlBtn) {
     openUmlBtn.addEventListener('click', () => {
-      selectCollection(tableName);
-      setView('uml');
+      if (state.db) {
+        openCollTab(state.db, tableName);
+        setView('uml');
+      }
     });
   }
 }
