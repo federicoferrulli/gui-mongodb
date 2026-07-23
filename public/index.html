@@ -325,6 +325,9 @@
                 <option value="1">1° Livello</option>
                 <option value="2">2° Livello</option>
               </select>
+              <button id="graph3d-find-path" class="ghost" title="Trova il cammino minimo tra 2 tabelle">🔗 Cammino</button>
+              <button id="graph3d-deps" class="ghost" title="Analizza la matrice delle dipendenze e l'ordine di popolamento">📊 Dipendenze</button>
+              <button id="graph3d-toggle-empty" class="ghost" title="Mostra/Nascondi tabelle vuote senza record">🎯 Solo Popolate</button>
               <button id="graph3d-toggle-implicit" class="ghost" title="Mostra/Nascondi relazioni implicite euristiche">💡 Implicite</button>
               <button id="graph3d-toggle-2d" class="ghost" title="Alterna tra vista 3D e vista 2D piatta">📐 Vista 2D</button>
               <button id="graph3d-auto-rotate" class="ghost" title="Attiva/Disattiva rotazione automatica 3D">🔄 Auto-Rotate</button>
@@ -684,6 +687,37 @@
       <div class="modal-actions">
         <button id="import-schema-close" class="ghost">Annulla</button>
         <button id="import-schema-render" class="primary">🌐 Genera Grafo 3D</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== Modale Cammino Minimo (Shortest Path) ===================== -->
+  <div id="path-modal" class="overlay hidden">
+    <div class="modal wide">
+      <h2>🔗 Ricerca Cammino Minimo tra Tabelle</h2>
+      <div class="form-row">
+        <label>Tabella di Partenza (Sorgente)
+          <select id="path-from-select"></select>
+        </label>
+        <label>Tabella di Arrivo (Destinazione)
+          <select id="path-to-select"></select>
+        </label>
+      </div>
+      <div id="path-result" style="max-height: 250px; overflow-y: auto; padding: 10px 0; margin-top: 10px;"></div>
+      <div class="modal-actions">
+        <button id="path-modal-close" class="ghost">Chiudi</button>
+        <button id="path-modal-calc" class="primary">🔍 Trova Cammino & Evidenzia 3D</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== Modale Matrice Dipendenze & Seeding ===================== -->
+  <div id="deps-modal" class="overlay hidden">
+    <div class="modal wide">
+      <h2>📊 Matrice Dipendenze & Ordine di Popolamento</h2>
+      <div id="deps-content" style="max-height: 420px; overflow-y: auto; padding: 10px 0;"></div>
+      <div class="modal-actions">
+        <button id="deps-modal-close" class="primary">Chiudi</button>
       </div>
     </div>
   </div>

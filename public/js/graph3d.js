@@ -9,22 +9,50 @@ let selectedNodeId = null;
 let autoRotateActive = false;
 let is2DMode = false;
 let showImplicitRelations = true;
+let hideEmptyTables = false;
 let currentSearchQuery = '';
+let activeShortestPath = null; // Set di nodi del cammino minimo
+
+const SCHEMA_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minuti
 
 export function loadGraph3d(force) {
   if (!state.db) return;
-  if (!force && state.dbSchema && state.dbSchemaFor === state.db) {
-    renderGraph3d();
-    return;
+  const cacheKey = `gui-db:schema-cache:${state.db}`;
+  
+  if (!force) {
+    const cachedText = sessionStorage.getItem(cacheKey);
+    if (cachedText) {
+      try {
+        const cached = JSON.parse(cachedText);
+        if (Date.now() - cached.timestamp < SCHEMA_CACHE_TTL_MS) {
+          state.dbSchema = cached.data;
+          state.dbSchemaFor = state.db;
+          renderGraph3d();
+          return;
+        }
+      } catch {
+        sessionStorage.removeItem(cacheKey);
+      }
+    }
   }
+
   const canvas = $('#graph3d-canvas');
   if (canvas) {
-    canvas.innerHTML = '<div class="uml-msg" style="color:#aaa; padding:20px;">Caricamento grafo 3D dello schema…</div>';
+    canvas.innerHTML = '<div class="uml-msg" style="color:#aaa; padding:20px;">Caricamento schema database…</div>';
   }
+
   emit('db:schema', { db: state.db })
     .then((res) => {
       res._tab.state.dbSchema = res;
       res._tab.state.dbSchemaFor = res._tab.state.db;
+      try {
+        sessionStorage.setItem(cacheKey, JSON.stringify({
+          timestamp: Date.now(),
+          data: res,
+        }));
+      } catch (err) {
+        console.warn('Impossibile salvare lo schema nella cache di sessione:', err);
+      }
       renderGraph3d();
     })
     .catch((err) => {
@@ -78,7 +106,11 @@ export function renderGraph3d() {
   }
 
   const nodes = schema.collections
-    .filter((c) => !activeNodesSet || activeNodesSet.has(c.name))
+    .filter((c) => {
+      if (hideEmptyTables && (!c.fields || c.fields.length === 0)) return false;
+      if (activeNodesSet && !activeNodesSet.has(c.name)) return false;
+      return true;
+    })
     .map((c) => {
       const degree = degreeMap.get(c.name) || 0;
       let val = 5;
@@ -121,11 +153,17 @@ export function renderGraph3d() {
 
   const prefixColors = ['#4a9eff', '#50e3c2', '#f5a623', '#b8e986', '#bd10e0', '#9013fe', '#e65100', '#ff4081', '#00e676'];
 
+  const pathNodeSet = activeShortestPath ? new Set(activeShortestPath.nodes) : null;
+  const pathEdgeSet = activeShortestPath ? new Set(activeShortestPath.edges) : null;
+
   graphInstance = ForceGraph3D({ preserveDrawingBuffer: true })(canvas)
     .graphData(graphData)
     .nodeId('id')
     .nodeLabel((node) => `<div style="background:rgba(15,20,28,0.95); padding:8px 12px; border-radius:6px; border:1px solid #4a9eff; font-family:sans-serif; color:#fff; font-size:12px;"><b>${esc(node.name)}</b><br/><small style="color:#aaa;">${node.fieldCount} campi • ${node.degree} relazioni</small></div>`)
     .nodeColor((node) => {
+      if (pathNodeSet) {
+        return pathNodeSet.has(node.id) ? '#00e676' : 'rgba(40, 45, 55, 0.2)';
+      }
       if (selectedNodeId && selectedNodeId !== node.id && !isNeighbor(selectedNodeId, node.id, neighborsMap)) {
         return 'rgba(50, 55, 65, 0.25)';
       }
@@ -136,13 +174,26 @@ export function renderGraph3d() {
       return prefixColors[Math.abs(hashString(prefix)) % prefixColors.length];
     })
     .nodeRelSize(4)
-    .linkDirectionalParticles((link) => (link.implicit ? 4 : 2))
+    .linkDirectionalParticles((link) => {
+      const edgeKey = `${typeof link.source === 'object' ? link.source.id : link.source}->${typeof link.target === 'object' ? link.target.id : link.target}`;
+      if (pathEdgeSet && pathEdgeSet.has(edgeKey)) return 6;
+      return link.implicit ? 4 : 2;
+    })
     .linkDirectionalParticleSpeed((link) => (link.implicit ? 0.012 : 0.006))
     .linkLabel((link) => `<span style="color:#aaa;">${esc(link.label)}${link.implicit ? ' (Implicita)' : ''}${link.many ? ' [N]' : ''}</span>`)
     .linkColor((link) => {
-      if (link.implicit) return '#bd10e0';
       const srcId = typeof link.source === 'object' ? link.source.id : link.source;
       const tgtId = typeof link.target === 'object' ? link.target.id : link.target;
+      const edgeKeyForward = `${srcId}->${tgtId}`;
+      const edgeKeyBackward = `${tgtId}->${srcId}`;
+
+      if (pathEdgeSet && (pathEdgeSet.has(edgeKeyForward) || pathEdgeSet.has(edgeKeyBackward))) {
+        return '#00e676';
+      }
+      if (pathEdgeSet) {
+        return 'rgba(30, 35, 45, 0.12)';
+      }
+      if (link.implicit) return '#bd10e0';
       if (selectedNodeId && srcId !== selectedNodeId && tgtId !== selectedNodeId) {
         return 'rgba(40, 45, 55, 0.15)';
       }
@@ -151,6 +202,12 @@ export function renderGraph3d() {
     .linkWidth((link) => {
       const srcId = typeof link.source === 'object' ? link.source.id : link.source;
       const tgtId = typeof link.target === 'object' ? link.target.id : link.target;
+      const edgeKeyForward = `${srcId}->${tgtId}`;
+      const edgeKeyBackward = `${tgtId}->${srcId}`;
+
+      if (pathEdgeSet && (pathEdgeSet.has(edgeKeyForward) || pathEdgeSet.has(edgeKeyBackward))) {
+        return 4.2;
+      }
       return selectedNodeId && (srcId === selectedNodeId || tgtId === selectedNodeId) ? 2.8 : 1.2;
     })
     .onNodeClick((node) => {
@@ -231,6 +288,11 @@ function detectImplicitRelations(collections, existingRelations) {
   return implicit;
 }
 
+function isPIIField(fieldName) {
+  const sensitiveRegex = /(email|phone|telephon|password|pass|ssn|fiscal|creditcard|iban|token|auth|secret)/i;
+  return sensitiveRegex.test(fieldName);
+}
+
 function getTablePrefix(name) {
   const parts = name.split('_');
   return parts.length > 1 ? parts[0] : name;
@@ -289,12 +351,13 @@ function showTableDetailsPanel(tableName, highlightQuery) {
     <ul class="side-panel-fields">`;
   for (const f of collection.fields) {
     const isPk = f.pk || f.name === '_id';
+    const isPii = isPIIField(f.name);
     const typeStr = (f.types || []).join(' | ') || 'any';
     const isMatched = highlightQuery && f.name.toLowerCase().includes(highlightQuery.toLowerCase());
     const highlightStyle = isMatched ? 'style="background: rgba(74, 158, 255, 0.25); border: 1px solid #4a9eff;"' : '';
 
     html += `<li ${highlightStyle}>
-      <span class="field-name">${esc(f.name)} ${isMatched ? '🔍' : ''}</span>
+      <span class="field-name">${esc(f.name)} ${isPii ? '<span title="Campo sensibile (PII/GDPR)" style="color:#f5a623;">🔒 PII</span>' : ''} ${isMatched ? '🔍' : ''}</span>
       <span>
         ${isPk ? '<span class="field-badge pk">PK</span> ' : ''}
         <span class="field-badge">${esc(typeStr)}</span>
@@ -368,7 +431,130 @@ function showTableDetailsPanel(tableName, highlightQuery) {
   }
 }
 
-// 1. Health Check & Schema Audit Algorithm
+// 1. Shortest Path Finder (BFS Algorithm)
+function computeShortestPath(startNode, endNode) {
+  const schema = state.dbSchema || currentSchemaData;
+  if (!schema || !schema.collections) return null;
+
+  const adj = new Map();
+  for (const c of schema.collections) adj.set(c.name, []);
+
+  const rels = [...(schema.relations || [])];
+  if (showImplicitRelations) {
+    rels.push(...detectImplicitRelations(schema.collections, rels));
+  }
+
+  for (const r of rels) {
+    if (adj.has(r.from)) adj.get(r.from).push({ to: r.to, field: r.field });
+    if (adj.has(r.to)) adj.get(r.to).push({ to: r.from, field: r.field });
+  }
+
+  const queue = [[startNode]];
+  const visited = new Set([startNode]);
+
+  while (queue.length > 0) {
+    const path = queue.shift();
+    const curr = path[path.length - 1];
+
+    if (curr === endNode) {
+      const edges = [];
+      for (let i = 0; i < path.length - 1; i++) {
+        edges.push(`${path[i]}->${path[i + 1]}`);
+      }
+      return { nodes: path, edges };
+    }
+
+    const neighbors = adj.get(curr) || [];
+    for (const n of neighbors) {
+      if (!visited.has(n.to)) {
+        visited.add(n.to);
+        queue.push([...path, n.to]);
+      }
+    }
+  }
+  return null;
+}
+
+// 3. Matrice delle Dipendenze (Topological Sort / Root & Leaf)
+function analyzeDependencies() {
+  const schema = state.dbSchema || currentSchemaData;
+  if (!schema || !schema.collections || !schema.collections.length) {
+    notify('Nessuno schema disponibile per le dipendenze.');
+    return;
+  }
+
+  const inDegree = new Map();
+  const outDegree = new Map();
+  const adj = new Map();
+
+  for (const c of schema.collections) {
+    inDegree.set(c.name, 0);
+    outDegree.set(c.name, 0);
+    adj.set(c.name, []);
+  }
+
+  const rels = schema.relations || [];
+  for (const r of rels) {
+    outDegree.set(r.from, (outDegree.get(r.from) || 0) + 1);
+    inDegree.set(r.to, (inDegree.get(r.to) || 0) + 1);
+    if (adj.has(r.from)) adj.get(r.from).push(r.to);
+  }
+
+  const rootTables = schema.collections.filter((c) => (outDegree.get(c.name) || 0) === 0);
+  const leafTables = schema.collections.filter((c) => (inDegree.get(c.name) || 0) === 0);
+
+  // Ordine di popolamento (Topological Sort)
+  const inDegreeCopy = new Map(outDegree); // Tabelle senza FK uscenti per prime
+  const queue = schema.collections.filter((c) => inDegreeCopy.get(c.name) === 0).map((c) => c.name);
+  const seedOrder = [];
+
+  while (queue.length > 0) {
+    const node = queue.shift();
+    seedOrder.push(node);
+    const neighbors = adj.get(node) || [];
+    for (const n of neighbors) {
+      inDegreeCopy.set(n, (inDegreeCopy.get(n) || 1) - 1);
+      if (inDegreeCopy.get(n) === 0 && !seedOrder.includes(n)) {
+        queue.push(n);
+      }
+    }
+  }
+
+  for (const c of schema.collections) {
+    if (!seedOrder.includes(c.name)) seedOrder.push(c.name);
+  }
+
+  let html = `<div style="margin-bottom:14px;">
+    <h3 style="margin:0 0 4px 0; color:var(--fg,#e1e4e8);">Analisi Architetturale Dipendenze</h3>
+    <small style="color:var(--fg-dim,#8b949e);">Identificazione tabelle Root/Leaf e sequenza ottima per seeding e svuotamento.</small>
+  </div>`;
+
+  html += `<div class="audit-issue-item" style="border-left-color:#00e676; margin-bottom:12px;">
+    <div class="audit-issue-title" style="color:#00e676;">🌱 Tabelle Root (${rootTables.length}) - Indipendenti senza FK uscenti</div>
+    <div class="audit-issue-desc">${rootTables.map((r) => `<b>${esc(r.name)}</b>`).join(', ') || 'Nessuna'}</div>
+  </div>`;
+
+  html += `<div class="audit-issue-item" style="border-left-color:#4a9eff; margin-bottom:12px;">
+    <div class="audit-issue-title" style="color:#4a9eff;">🍃 Tabelle Leaf (${leafTables.length}) - Tabelle foglia terminali</div>
+    <div class="audit-issue-desc">${leafTables.map((l) => `<b>${esc(l.name)}</b>`).join(', ') || 'Nessuna'}</div>
+  </div>`;
+
+  html += `<div class="audit-issue-item" style="border-left-color:#f5a623;">
+    <div class="audit-issue-title" style="color:#f5a623;">🔄 Sequenza Ottima di Popolamento (Seeding)</div>
+    <div class="audit-issue-desc">
+      <ol style="margin:6px 0 0 18px; padding:0; color:var(--fg,#e1e4e8);">
+        ${seedOrder.map((s) => `<li style="padding:2px 0;"><b>${esc(s)}</b></li>`).join('')}
+      </ol>
+    </div>
+  </div>`;
+
+  const depsContent = $('#deps-content');
+  if (depsContent) {
+    depsContent.innerHTML = html;
+    $('#deps-modal').classList.remove('hidden');
+  }
+}
+
 function runSchemaAudit() {
   const schema = state.dbSchema || currentSchemaData;
   if (!schema || !schema.collections || !schema.collections.length) {
@@ -450,7 +636,6 @@ function runSchemaAudit() {
   }
 }
 
-// 3. Salva File Locale JSON (Download su Disco)
 function saveSchemaSnapshotLocal() {
   const schema = state.dbSchema || currentSchemaData;
   if (!schema) {
@@ -478,7 +663,6 @@ function saveSchemaSnapshotLocal() {
   notify(`File snapshot "schema-snapshot-${state.db || 'db'}.json" salvato sul tuo computer!`);
 }
 
-// Diff tra Schema Attivo e File JSON locale caricato
 function renderDiffReport(snapshot) {
   const activeSchema = state.dbSchema || currentSchemaData;
   if (!activeSchema || !snapshot || !snapshot.collections) return;
@@ -547,7 +731,6 @@ function renderDiffReport(snapshot) {
   }
 }
 
-// 4. Parser DDL SQL & DBML Standalone
 function parseSchemaInput(text, format) {
   const collections = [];
   const relations = [];
@@ -585,7 +768,6 @@ function parseSchemaInput(text, format) {
       });
     }
   } else {
-    // SQL DDL Parser
     const tableRegex = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?([a-zA-Z0-9_]+)`?\s*\(([^;]+)\);/gi;
     let match;
     while ((match = tableRegex.exec(text)) !== null) {
@@ -762,6 +944,88 @@ export function initGraph3d() {
   const hopSelect = $('#graph3d-hop-filter');
   if (hopSelect) hopSelect.addEventListener('change', () => renderGraph3d());
 
+  // 1. Shortest Path Modal Trigger & Handler
+  const pathBtn = $('#graph3d-find-path');
+  if (pathBtn) {
+    pathBtn.addEventListener('click', () => {
+      const schema = state.dbSchema || currentSchemaData;
+      if (!schema || !schema.collections || !schema.collections.length) {
+        notify('Nessuno schema disponibile.');
+        return;
+      }
+
+      const fromSel = $('#path-from-select');
+      const toSel = $('#path-to-select');
+      if (fromSel && toSel) {
+        const optionsHtml = schema.collections.map((c) => `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join('');
+        fromSel.innerHTML = optionsHtml;
+        toSel.innerHTML = optionsHtml;
+        if (schema.collections.length > 1) {
+          toSel.selectedIndex = 1;
+        }
+      }
+      $('#path-result').innerHTML = '';
+      $('#path-modal').classList.remove('hidden');
+    });
+  }
+
+  const pathCalcBtn = $('#path-modal-calc');
+  if (pathCalcBtn) {
+    pathCalcBtn.addEventListener('click', () => {
+      const start = $('#path-from-select').value;
+      const end = $('#path-to-select').value;
+
+      if (start === end) {
+        notify('Seleziona due tabelle differenti.');
+        return;
+      }
+
+      const res = computeShortestPath(start, end);
+      const resDiv = $('#path-result');
+
+      if (!res) {
+        activeShortestPath = null;
+        if (resDiv) resDiv.innerHTML = `<div style="color:#e5534b;">Nessun cammino trovato tra <b>${esc(start)}</b> e <b>${esc(end)}</b>.</div>`;
+        renderGraph3d();
+      } else {
+        activeShortestPath = res;
+        if (resDiv) {
+          resDiv.innerHTML = `<div class="audit-issue-item" style="border-left-color:#00e676;">
+            <div class="audit-issue-title" style="color:#00e676;">✓ Cammino Minimo Trovato (${res.nodes.length - 1} passaggi)</div>
+            <div class="audit-issue-desc" style="font-size:0.95rem; margin-top:6px;">
+              ${res.nodes.map((n) => `<b style="color:#00e676;">${esc(n)}</b>`).join(' → ')}
+            </div>
+          </div>`;
+        }
+        $('#path-modal').classList.add('hidden');
+        renderGraph3d();
+        notify(`Cammino tra "${start}" e "${end}" evidenziato in verde nel 3D!`);
+      }
+    });
+  }
+
+  const pathCloseBtn = $('#path-modal-close');
+  if (pathCloseBtn) {
+    pathCloseBtn.addEventListener('click', () => $('#path-modal').classList.add('hidden'));
+  }
+
+  // 3. Matrice Dipendenze Trigger
+  const depsBtn = $('#graph3d-deps');
+  if (depsBtn) depsBtn.addEventListener('click', () => analyzeDependencies());
+  const depsCloseBtn = $('#deps-modal-close');
+  if (depsCloseBtn) depsCloseBtn.addEventListener('click', () => $('#deps-modal').classList.add('hidden'));
+
+  // 5. Filtro Tabelle Vuote
+  const toggleEmptyBtn = $('#graph3d-toggle-empty');
+  if (toggleEmptyBtn) {
+    toggleEmptyBtn.addEventListener('click', () => {
+      hideEmptyTables = !hideEmptyTables;
+      toggleEmptyBtn.classList.toggle('active', hideEmptyTables);
+      renderGraph3d();
+      notify(hideEmptyTables ? 'Tabelle vuote nascoste' : 'Tutte le tabelle visibili');
+    });
+  }
+
   const implicitBtn = $('#graph3d-toggle-implicit');
   if (implicitBtn) {
     implicitBtn.addEventListener('click', () => {
@@ -800,11 +1064,9 @@ export function initGraph3d() {
   const auditCloseBtn = $('#audit-modal-close');
   if (auditCloseBtn) auditCloseBtn.addEventListener('click', () => $('#audit-modal').classList.add('hidden'));
 
-  // Salva Snapshot locale (.json file download)
   const saveSnapBtn = $('#graph3d-save-snapshot');
   if (saveSnapBtn) saveSnapBtn.addEventListener('click', () => saveSchemaSnapshotLocal());
 
-  // Diff con caricamento file .json locale
   const diffBtn = $('#graph3d-diff');
   if (diffBtn) {
     diffBtn.addEventListener('click', () => {
@@ -883,6 +1145,7 @@ export function initGraph3d() {
   if (resetBtn) {
     resetBtn.addEventListener('click', () => {
       selectedNodeId = null;
+      activeShortestPath = null;
       if (graphInstance) {
         graphInstance.zoomToFit(1000, 50);
         graphInstance.nodeColor(graphInstance.nodeColor()).linkWidth(graphInstance.linkWidth());
