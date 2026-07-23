@@ -111,7 +111,7 @@ async function newMcpClient() {
     mcp1 = await newMcpClient();
     const tools = await mcp1.client.listTools();
     const names = tools.tools.map((t) => t.name);
-    for (const t of ['list_saved_connections', 'connect_database', 'disconnect_database', 'get_databases_and_collections', 'get_schema', 'execute_query', 'execute_write', 'set_connection_read_only']) {
+    for (const t of ['list_saved_connections', 'connect_database', 'disconnect_database', 'get_databases_and_collections', 'get_schema', 'execute_query', 'execute_write', 'set_connection_read_only', 'get_shortest_path', 'analyze_dependencies', 'analyze_pii', 'audit_schema', 'filter_empty_tables', 'get_graph']) {
       assert(names.includes(t), `tool "${t}" esposto`);
     }
 
@@ -153,6 +153,25 @@ async function newMcpClient() {
     });
     assert(agg.ok && agg.data.docs[0].totale === 77, `aggregazione: totale = ${agg.ok ? agg.data.docs[0].totale : agg.text}`);
 
+    console.log('9b. Strumenti analitici ed architetturali MCP');
+    const sp = await call(mcp1.client, 'get_shortest_path', { connection_id: cid, db: DB, from_table: 'orders', to_table: 'people' });
+    assert(sp.ok && sp.data.found && sp.data.path.includes('orders') && sp.data.path.includes('people'), 'get_shortest_path trova il cammino tra orders e people');
+
+    const deps = await call(mcp1.client, 'analyze_dependencies', { connection_id: cid, db: DB });
+    assert(deps.ok && Array.isArray(deps.data.seeding_order) && deps.data.seeding_order.length >= 2, 'analyze_dependencies calcola seeding order');
+
+    const pii = await call(mcp1.client, 'analyze_pii', { connection_id: cid, db: DB });
+    assert(pii.ok && typeof pii.data.total_pii_fields === 'number', 'analyze_pii scansiona i dati sensibili');
+
+    const audit = await call(mcp1.client, 'audit_schema', { connection_id: cid, db: DB });
+    assert(audit.ok && typeof audit.data.health_score === 'number' && Array.isArray(audit.data.issues), 'audit_schema valuta la salute dello schema');
+
+    const empty = await call(mcp1.client, 'filter_empty_tables', { connection_id: cid, db: DB });
+    assert(empty.ok && Array.isArray(empty.data.non_empty_tables), 'filter_empty_tables identifica le tabelle popolate e vuote');
+
+    const graph = await call(mcp1.client, 'get_graph', { connection_id: cid, db: DB });
+    assert(graph.ok && Array.isArray(graph.data.nodes) && Array.isArray(graph.data.links) && graph.data.stats.node_count >= 2, 'get_graph restituisce nodi ed archi per la visualizzazione 3D/2D');
+
     console.log('10. guardie e parametri errati');
     const out = await call(mcp1.client, 'execute_query', { connection_id: cid, db: DB, collection: 'people', pipeline: '[{ "$out": "copia" }]' });
     assert(!out.ok && /\$out/.test(out.text), 'pipeline con $out rifiutata');
@@ -163,21 +182,26 @@ async function newMcpClient() {
     const badFilter = await call(mcp1.client, 'execute_query', { connection_id: cid, db: DB, collection: 'people', filter: '{ non valido }' });
     assert(!badFilter.ok, 'filtro con sintassi errata: errore riportato');
 
-    console.log('10b. Fase 2: prompts');
+    console.log('10b. Prompts MCP');
     const prompts = await mcp1.client.listPrompts();
     const pnames = prompts.prompts.map((p) => p.name);
-    assert(pnames.includes('genera-report') && pnames.includes('esplora-database'), `prompts esposti (${pnames.join(', ')})`);
-    const prompt = await mcp1.client.getPrompt({ name: 'genera-report', arguments: { connessione: CONN_NAME, db: DB, periodo: '2026' } });
+    assert(['genera-report', 'esplora-database', 'analizza-gdpr', 'diagnostica-schema'].every((p) => pnames.includes(p)), `prompts esposti (${pnames.join(', ')})`);
+    const prompt = await mcp1.client.getPrompt({ name: 'analizza-gdpr', arguments: { connessione: CONN_NAME, db: DB } });
     const ptext = prompt.messages[0].content.text;
-    assert(ptext.includes(CONN_NAME) && ptext.includes(DB) && ptext.includes('2026'), 'prompt parametrizzato con connessione, db e periodo');
+    assert(ptext.includes(CONN_NAME) && ptext.includes(DB) && ptext.includes('analyze_pii'), 'prompt analizza-gdpr parametrizzato');
 
-    console.log('10c. Fase 2: resource schema://');
+    console.log('10c. Risorse schema:// e graph://');
     const tmpl = await mcp1.client.listResourceTemplates();
-    assert(tmpl.resourceTemplates.some((t) => t.uriTemplate === 'schema://{connectionId}/{db}'), 'template schema:// pubblicato');
+    assert(tmpl.resourceTemplates.some((t) => t.uriTemplate === 'schema://{connectionId}/{db}') && tmpl.resourceTemplates.some((t) => t.uriTemplate === 'graph://{connectionId}/{db}'), 'template schema:// e graph:// pubblicati');
     const resr = await mcp1.client.readResource({ uri: `schema://${cid}/${DB}` });
     const rtext = resr.contents[0].text;
     assert(resr.contents[0].mimeType === 'text/markdown' && rtext.includes('erDiagram'), 'risorsa markdown con diagramma Mermaid');
     assert(rtext.includes('people') && /orders\.people_id.*people/.test(rtext.replace(/`/g, '')), 'dizionario dati con relazione orders.people_id -> people');
+
+    const resrGraph = await mcp1.client.readResource({ uri: `graph://${cid}/${DB}` });
+    const gtext = resrGraph.contents[0].text;
+    const gjson = JSON.parse(gtext);
+    assert(resrGraph.contents[0].mimeType === 'application/json' && Array.isArray(gjson.nodes) && Array.isArray(gjson.links), 'risorsa graph:// JSON con nodi ed archi');
     const resrBad = await mcp1.client.readResource({ uri: `schema://sconosciuto/${DB}` }).then(() => true, () => false);
     assert(!resrBad, 'risorsa con connection_id sconosciuto rifiutata');
 

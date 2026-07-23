@@ -63,7 +63,7 @@ In `.cursor/mcp.json` (di progetto) o `~/.cursor/mcp.json` (globale):
 
 ## 4. Come lo usa l'AI
 
-Flusso tipico dei tools esposti (i primi 6 sono di sola lettura):
+Flusso tipico dei tools esposti:
 
 1. `list_saved_connections` — elenca le connessioni salvate (nome, tipo, host mascherato, flag `readOnly`; **mai** password).
 2. `connect_database` — apre una connessione per nome e restituisce un `connection_id` (tunnel SSH gestiti automaticamente dal server).
@@ -71,11 +71,19 @@ Flusso tipico dei tools esposti (i primi 6 sono di sola lettura):
 4. `get_schema` — campi/colonne e relazioni (FK reali + euristiche): utile all'AI per scrivere query corrette.
 5. `execute_query` — MongoDB: `filter`/`sort`/`projection` o `pipeline` (Extended JSON); MySQL: `sql` (solo SELECT e simili).
 6. `disconnect_database` — chiude la connessione.
-7. `execute_write` — scritture DML e drop di database/collection, solo su connessioni scrivibili e con doppia conferma (vedi sotto).
-8. `set_connection_read_only` — cambia il flag `readOnly` di una connessione salvata, con doppia conferma (vedi sotto).
-9. `backup_database` / `list_backups` / `restore_backup` — backup e ripristino dei database (vedi sotto).
+7. `get_shortest_path` — calcola il cammino minimo di relazioni tra due tabelle (algoritmo BFS).
+8. `analyze_dependencies` — matrice delle dipendenze, tabelle Root/Leaf e sequenza ottima di seeding.
+9. `analyze_pii` — scansione dei campi contenenti dati sensibili e personali (GDPR/PII).
+10. `audit_schema` — diagnostica e stato di salute dello schema (punteggio 0-100, tabelle orfane/oversize/senza PK).
+11. `filter_empty_tables` — identificazione ed elenco delle tabelle vuote vs popolate.
+12. `get_graph` — struttura a nodi ed archi (Graph 3D/2D JSON) per il rendering visivo e l'analisi di rete.
+13. `execute_write` — scritture DML e drop di database/collection, solo su connessioni scrivibili e con doppia conferma (vedi sotto).
+14. `set_connection_read_only` — cambia il flag `readOnly` di una connessione salvata, con doppia conferma (vedi sotto).
+15. `backup_database` / `list_backups` / `restore_backup` — backup e ripristino dei database (vedi sotto).
 
-In più: la risorsa `schema://{connection_id}/{db}` (UML Mermaid + dizionario dati sempre aggiornati) e i prompt `genera-report` / `esplora-database`.
+In più:
+- **Risorse**: `schema://{connection_id}/{db}` (UML Mermaid + dizionario dati sempre aggiornati) e `graph://{connection_id}/{db}` (struttura JSON a nodi ed archi del grafo relazionale).
+- **Prompts**: `genera-report`, `esplora-database`, `analizza-gdpr` (audit di conformità privacy e dati sensibili) e `diagnostica-schema` (valutazione della salute dello schema ed ordine di popolamento).
 
 ### Scritture (opzionali, con conferma)
 

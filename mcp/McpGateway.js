@@ -200,6 +200,281 @@ function renderSchemaMarkdown(db, schema) {
 }
 
 /* ---------------------------------------------------------------------------
+ * Generatori ed euristiche analitiche (Shortest Path, Dipendenze, PII, Audit)
+ * ------------------------------------------------------------------------- */
+
+function detectImplicitRelations(collections, existingRelations) {
+  const existingSet = new Set((existingRelations || []).map((r) => `${r.from}.${r.field}->${r.to}`));
+  const implicit = [];
+
+  for (const c of collections || []) {
+    for (const f of c.fields || []) {
+      if (f.name === '_id' || f.pk) continue;
+      const low = f.name.toLowerCase();
+      const match = low.match(/^(.+?)_?ids?$/);
+      if (match) {
+        const base = match[1];
+        const target = (collections || []).find((x) => x.name.toLowerCase() === base || x.name.toLowerCase() === base + 's');
+        if (target && target.name !== c.name) {
+          const key = `${c.name}.${f.name}->${target.name}`;
+          if (!existingSet.has(key)) {
+            implicit.push({
+              from: c.name,
+              field: f.name,
+              to: target.name,
+              many: true,
+              implicit: true,
+            });
+            existingSet.add(key);
+          }
+        }
+      }
+    }
+  }
+  return implicit;
+}
+
+function computeShortestPath(schema, startNode, endNode, includeImplicit = true) {
+  if (!schema || !schema.collections) return null;
+  const adj = new Map();
+  for (const c of schema.collections) adj.set(c.name, []);
+
+  const rels = [...(schema.relations || [])];
+  if (includeImplicit) {
+    rels.push(...detectImplicitRelations(schema.collections, rels));
+  }
+
+  for (const r of rels) {
+    if (adj.has(r.from)) adj.get(r.from).push({ to: r.to, field: r.field });
+    if (adj.has(r.to)) adj.get(r.to).push({ to: r.from, field: r.field });
+  }
+
+  if (!adj.has(startNode) || !adj.has(endNode)) return null;
+
+  const queue = [[startNode]];
+  const visited = new Set([startNode]);
+
+  while (queue.length > 0) {
+    const path = queue.shift();
+    const curr = path[path.length - 1];
+
+    if (curr === endNode) {
+      const edges = [];
+      for (let i = 0; i < path.length - 1; i++) {
+        edges.push(`${path[i]}->${path[i + 1]}`);
+      }
+      return { found: true, from: startNode, to: endNode, distance: path.length - 1, path, edges };
+    }
+
+    const neighbors = adj.get(curr) || [];
+    for (const n of neighbors) {
+      if (!visited.has(n.to)) {
+        visited.add(n.to);
+        queue.push([...path, n.to]);
+      }
+    }
+  }
+
+  return { found: false, from: startNode, to: endNode, message: `Nessun cammino trovato tra ${startNode} e ${endNode}` };
+}
+
+function analyzeDependencies(schema, includeImplicit = false) {
+  if (!schema || !schema.collections || !schema.collections.length) {
+    return { root_tables: [], leaf_tables: [], seeding_order: [], total_tables: 0 };
+  }
+
+  const inDegree = new Map();
+  const outDegree = new Map();
+  const adj = new Map();
+
+  for (const c of schema.collections) {
+    inDegree.set(c.name, 0);
+    outDegree.set(c.name, 0);
+    adj.set(c.name, []);
+  }
+
+  const rels = [...(schema.relations || [])];
+  if (includeImplicit) {
+    rels.push(...detectImplicitRelations(schema.collections, rels));
+  }
+
+  for (const r of rels) {
+    outDegree.set(r.from, (outDegree.get(r.from) || 0) + 1);
+    inDegree.set(r.to, (inDegree.get(r.to) || 0) + 1);
+    if (adj.has(r.from)) adj.get(r.from).push(r.to);
+  }
+
+  const rootTables = schema.collections.filter((c) => (outDegree.get(c.name) || 0) === 0).map((c) => c.name);
+  const leafTables = schema.collections.filter((c) => (inDegree.get(c.name) || 0) === 0).map((c) => c.name);
+
+  const inDegreeCopy = new Map(outDegree);
+  const queue = schema.collections.filter((c) => inDegreeCopy.get(c.name) === 0).map((c) => c.name);
+  const seedingOrder = [];
+
+  while (queue.length > 0) {
+    const node = queue.shift();
+    seedingOrder.push(node);
+    const neighbors = adj.get(node) || [];
+    for (const n of neighbors) {
+      inDegreeCopy.set(n, (inDegreeCopy.get(n) || 1) - 1);
+      if (inDegreeCopy.get(n) === 0 && !seedingOrder.includes(n)) {
+        queue.push(n);
+      }
+    }
+  }
+
+  for (const c of schema.collections) {
+    if (!seedingOrder.includes(c.name)) seedingOrder.push(c.name);
+  }
+
+  return {
+    root_tables: rootTables,
+    leaf_tables: leafTables,
+    seeding_order: seedingOrder,
+    total_tables: schema.collections.length,
+  };
+}
+
+const PII_REGEX = /(email|phone|telephon|password|pass|ssn|fiscal|creditcard|iban|token|auth|secret|address|dob|birth|ip|vat|tax)/i;
+
+function analyzePii(schema) {
+  if (!schema || !schema.collections) {
+    return { total_pii_fields: 0, affected_tables_count: 0, pii_by_table: {} };
+  }
+
+  const piiByTable = {};
+  let totalPiiFields = 0;
+
+  for (const c of schema.collections) {
+    const sensitiveFields = [];
+    for (const f of c.fields || []) {
+      if (PII_REGEX.test(f.name)) {
+        sensitiveFields.push({
+          field: f.name,
+          types: f.types || [],
+          presence: f.presence,
+        });
+        totalPiiFields++;
+      }
+    }
+    if (sensitiveFields.length > 0) {
+      piiByTable[c.name] = sensitiveFields;
+    }
+  }
+
+  return {
+    total_pii_fields: totalPiiFields,
+    affected_tables_count: Object.keys(piiByTable).length,
+    pii_by_table: piiByTable,
+  };
+}
+
+function auditSchema(schema) {
+  if (!schema || !schema.collections) {
+    return { health_score: 100, total_tables: 0, issues: [], metric_summary: {} };
+  }
+
+  const issues = [];
+  let score = 100;
+
+  const degreeMap = new Map();
+  for (const c of schema.collections) degreeMap.set(c.name, 0);
+  for (const r of schema.relations || []) {
+    degreeMap.set(r.from, (degreeMap.get(r.from) || 0) + 1);
+    degreeMap.set(r.to, (degreeMap.get(r.to) || 0) + 1);
+  }
+
+  const orphanTables = schema.collections.filter((c) => (degreeMap.get(c.name) || 0) === 0).map((c) => c.name);
+  if (orphanTables.length) {
+    score -= Math.min(30, orphanTables.length * 10);
+    issues.push({
+      type: 'warn',
+      title: `Tabelle Orfane (${orphanTables.length})`,
+      description: `Tabelle senza alcuna relazione: ${orphanTables.join(', ')}`,
+    });
+  }
+
+  const oversizedTables = schema.collections.filter((c) => c.fields && c.fields.length > 25).map((c) => `${c.name} (${c.fields.length} campi)`);
+  if (oversizedTables.length) {
+    score -= Math.min(20, oversizedTables.length * 5);
+    issues.push({
+      type: 'warn',
+      title: `Tabelle Oversize (${oversizedTables.length})`,
+      description: `Tabelle con più di 25 campi: ${oversizedTables.join(', ')}`,
+    });
+  }
+
+  const missingPkTables = schema.collections.filter((c) => !(c.fields || []).some((f) => f.pk || f.name === '_id')).map((c) => c.name);
+  if (missingPkTables.length) {
+    score -= Math.min(30, missingPkTables.length * 15);
+    issues.push({
+      type: 'bad',
+      title: `Tabelle Senza Chiave Primaria (${missingPkTables.length})`,
+      description: `Tabelle prive di PK o _id: ${missingPkTables.join(', ')}`,
+    });
+  }
+
+  return {
+    health_score: Math.max(0, score),
+    total_tables: schema.collections.length,
+    issues,
+    metric_summary: {
+      orphan_tables: orphanTables,
+      oversized_tables: oversizedTables,
+      missing_pk_tables: missingPkTables,
+    },
+  };
+}
+
+function buildGraphData(schema, includeImplicit = true) {
+  if (!schema || !schema.collections) {
+    return { nodes: [], links: [], stats: { node_count: 0, edge_count: 0, implicit_count: 0 } };
+  }
+
+  const degreeMap = new Map();
+  for (const c of schema.collections) degreeMap.set(c.name, 0);
+
+  const rels = [...(schema.relations || [])];
+  let implicitCount = 0;
+  if (includeImplicit) {
+    const implicitRels = detectImplicitRelations(schema.collections, rels);
+    implicitCount = implicitRels.length;
+    rels.push(...implicitRels);
+  }
+
+  for (const r of rels) {
+    degreeMap.set(r.from, (degreeMap.get(r.from) || 0) + 1);
+    degreeMap.set(r.to, (degreeMap.get(r.to) || 0) + 1);
+  }
+
+  const nodes = schema.collections.map((c) => ({
+    id: c.name,
+    name: c.name,
+    degree: degreeMap.get(c.name) || 0,
+    fieldCount: (c.fields && c.fields.length) || 0,
+    fields: (c.fields || []).map((f) => ({ name: f.name, types: f.types || [], pk: !!f.pk })),
+  }));
+
+  const links = rels.map((r) => ({
+    source: r.from,
+    target: r.to,
+    label: r.field,
+    many: !!r.many,
+    implicit: !!r.implicit,
+  }));
+
+  return {
+    nodes,
+    links,
+    stats: {
+      node_count: nodes.length,
+      edge_count: links.length,
+      implicit_count: implicitCount,
+    },
+  };
+}
+
+/* ---------------------------------------------------------------------------
  * Definizione di tools, prompts e resources su un McpServer legato a una
  * sessione MCP
  * ------------------------------------------------------------------------- */
@@ -222,8 +497,10 @@ function buildMcpServer(session, deps) {
         'Gateway di sola lettura verso i database (MongoDB e MySQL) gestiti da Mongo Web GUI. ' +
         'Flusso tipico: list_saved_connections → connect_database → get_databases_and_collections ' +
         '→ get_schema → execute_query. Chiudi le connessioni con disconnect_database quando hai finito. ' +
+        'Strumenti analitici avanzati: get_shortest_path (cammino di relazioni tra tabelle), analyze_dependencies (matrice dipendenze e seeding order), ' +
+        'analyze_pii (scansione privacy GDPR), audit_schema (diagnostica salute e tabelle orfane), filter_empty_tables (tabelle vuote). ' +
         'La risorsa schema://{connection_id}/{db} fornisce UML Mermaid e dizionario dati sempre aggiornati; ' +
-        'i prompt genera-report ed esplora-database guidano i flussi ricorrenti. ' +
+        'i prompt genera-report, esplora-database, analizza-gdpr e diagnostica-schema guidano i flussi ricorrenti. ' +
         'Backup e ripristino: backup_database (full/incremental/differential), list_backups e restore_backup ' +
         '(il restore richiede una connessione con readOnly=false e la conferma esplicita dell\'utente umano).',
     }
@@ -405,6 +682,119 @@ function buildMcpServer(session, deps) {
       skip: args.skip,
       limit: args.limit == null ? 50 : args.limit,
     }));
+  });
+
+  // --- Strumenti Analitici & Diagnostici dello Schema ------------------------
+
+  tool('get_shortest_path', {
+    title: 'Cammino minimo tra due tabelle',
+    description:
+      'Trova il cammino minimo di relazioni tra due tabelle/collezioni nel database usando l\'algoritmo BFS. ' +
+      'Analizza sia le relazioni esplicite (Foreign Key) che le relazioni implicite (*_id).',
+    inputSchema: {
+      connection_id: z.string(),
+      db: z.string().describe('Nome del database'),
+      from_table: z.string().describe('Nome della tabella/collection di partenza'),
+      to_table: z.string().describe('Nome della tabella/collection di destinazione'),
+      include_implicit: z.boolean().optional().describe('Includi relazioni implicite basate sui campi *_id (default: true)'),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, async ({ connection_id, db, from_table, to_table, include_implicit }) => {
+    const sess = requireDbSession(connection_id);
+    const schema = await sess.strategy.dbSchema(String(db || '').trim());
+    const res = computeShortestPath(schema, String(from_table || '').trim(), String(to_table || '').trim(), include_implicit !== false);
+    if (!res) throw new Error(`Impossibile calcolare il cammino: tabella sorgente "${from_table}" o destinazione "${to_table}" non trovata nello schema.`);
+    return jsonResult(res);
+  });
+
+  tool('analyze_dependencies', {
+    title: 'Matrice delle dipendenze e ordine di seeding',
+    description:
+      'Esegue l\'analisi delle dipendenze tra le tabelle/collezioni del database. Identifica le tabelle Root ' +
+      '(indipendenti, senza FK uscenti), le tabelle Leaf (foglia, terminali) e calcola l\'ordine topologico ottimale di seeding.',
+    inputSchema: {
+      connection_id: z.string(),
+      db: z.string().describe('Nome del database'),
+      include_implicit: z.boolean().optional().describe('Includi relazioni implicite basate sui campi *_id (default: false)'),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, async ({ connection_id, db, include_implicit }) => {
+    const sess = requireDbSession(connection_id);
+    const schema = await sess.strategy.dbSchema(String(db || '').trim());
+    return jsonResult(analyzeDependencies(schema, !!include_implicit));
+  });
+
+  tool('analyze_pii', {
+    title: 'Analisi dati sensibili (PII / GDPR)',
+    description:
+      'Scansiona la struttura del database per identificare campi e colonne contenenti dati personali o sensibili ' +
+      '(email, password, telefoni, codice fiscale, carte di credito, IBAN, token, ecc.) secondo la normativa GDPR/PII.',
+    inputSchema: {
+      connection_id: z.string(),
+      db: z.string().describe('Nome del database'),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, async ({ connection_id, db }) => {
+    const sess = requireDbSession(connection_id);
+    const schema = await sess.strategy.dbSchema(String(db || '').trim());
+    return jsonResult(analyzePii(schema));
+  });
+
+  tool('audit_schema', {
+    title: 'Diagnostica e audit dello schema',
+    description:
+      'Esegue una diagnosi dello stato di salute dello schema del database: rileva tabelle orfane, tabelle oversize (>25 campi), ' +
+      'tabelle senza chiave primaria (PK) e calcola un punteggio complessivo di salute (0-100).',
+    inputSchema: {
+      connection_id: z.string(),
+      db: z.string().describe('Nome del database'),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, async ({ connection_id, db }) => {
+    const sess = requireDbSession(connection_id);
+    const schema = await sess.strategy.dbSchema(String(db || '').trim());
+    return jsonResult(auditSchema(schema));
+  });
+
+  tool('filter_empty_tables', {
+    title: 'Identifica tabelle vuote',
+    description:
+      'Identifica ed elenca le tabelle o collezioni che sono completamente vuote (0 righe/documenti) o senza campi, ' +
+      'consentendo all\'AI di concentrare l\'analisi sulle sole entità popolate.',
+    inputSchema: {
+      connection_id: z.string(),
+      db: z.string().describe('Nome del database'),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, async ({ connection_id, db }) => {
+    const sess = requireDbSession(connection_id);
+    const dbName = String(db || '').trim();
+    const collections = await sess.strategy.listCollections(dbName);
+    const emptyTables = collections.filter((c) => (c.count != null && c.count === 0) || (c.size != null && c.size === 0)).map((c) => c.name);
+    const nonEmptyTables = collections.filter((c) => !emptyTables.includes(c.name)).map((c) => c.name);
+    return jsonResult({
+      empty_tables: emptyTables,
+      non_empty_tables: nonEmptyTables,
+      empty_count: emptyTables.length,
+      total_count: collections.length,
+    });
+  });
+
+  tool('get_graph', {
+    title: 'Struttura Grafo Database (Nodi & Archi 3D/2D)',
+    description:
+      'Restituisce la struttura del grafo relazionale (Graph 3D/2D) del database in forma di nodi ed archi, ' +
+      'pronta per il rendering 3D/2D o l\'analisi di rete. Include degree centrality, campi e relazioni (esplicite ed implicite).',
+    inputSchema: {
+      connection_id: z.string(),
+      db: z.string().describe('Nome del database'),
+      include_implicit: z.boolean().optional().describe('Includi relazioni implicite basate sui campi *_id (default: true)'),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, async ({ connection_id, db, include_implicit }) => {
+    const sess = requireDbSession(connection_id);
+    const schema = await sess.strategy.dbSchema(String(db || '').trim());
+    return jsonResult(buildGraphData(schema, include_implicit !== false));
   });
 
   // --- Fase 3: scritture con conferma esplicita (human-in-the-loop) -----------
@@ -847,6 +1237,26 @@ function buildMcpServer(session, deps) {
     }
   );
 
+  server.registerResource(
+    'graph',
+    new ResourceTemplate('graph://{connectionId}/{db}', { list: undefined }),
+    {
+      title: 'Grafo relazionale (Nodi & Archi 3D/2D JSON)',
+      description:
+        'Struttura JSON a nodi ed archi del grafo relazionale (Graph 3D/2D), con degree centrality, campi e relazioni (esplicite ed implicite). ' +
+        'URI: graph://{connectionId}/{db}, dove connectionId è quello restituito da connect_database.',
+      mimeType: 'application/json',
+    },
+    async (uri, { connectionId, db }) => {
+      const sess = requireDbSession(connectionId);
+      const dbName = String(db || '').trim();
+      if (!dbName) throw new Error('Nome del database mancante nell\'URI (graph://{connectionId}/{db}).');
+      const schema = await sess.strategy.dbSchema(dbName);
+      const graphData = buildGraphData(schema, true);
+      return { contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify(graphData, null, 2) }] };
+    }
+  );
+
   // --- Prompts (Fase 2): template parametrizzati per i flussi ricorrenti ------
 
   server.registerPrompt('genera-report', {
@@ -898,6 +1308,54 @@ function buildMcpServer(session, deps) {
           '3. Per il database di interesse leggi lo schema con get_schema e osserva qualche documento/riga reale con execute_query (limit 5).\n' +
           '4. Produci un dizionario dati commentato in markdown: per ogni collection/tabella scopo presunto, campi principali con tipi, relazioni con le altre entità e note su qualità/particolarità dei dati.\n' +
           '5. Alla fine chiudi la connessione con disconnect_database.',
+      },
+    }],
+  }));
+
+  server.registerPrompt('analizza-gdpr', {
+    title: 'Analisi di conformità GDPR e PII',
+    description: 'Scansiona il database alla ricerca di campi sensibili (PII) e suggerisce misure per la conformità GDPR.',
+    argsSchema: {
+      connessione: z.string().describe('Nome della connessione salvata'),
+      db: z.string().describe('Database da analizzare'),
+    },
+  }, ({ connessione, db }) => ({
+    messages: [{
+      role: 'user',
+      content: {
+        type: 'text',
+        text:
+          `Esegui un'analisi della privacy e dei dati sensibili (PII/GDPR) sul database "${db}" della connessione "${connessione}".\n\n` +
+          'Procedi così:\n' +
+          `1. Apri la connessione con connect_database (saved: "${connessione}").\n` +
+          `2. Esegui il tool analyze_pii su "${db}".\n` +
+          '3. Ispeziona gli schemi o le tabelle interessate con get_schema ed execute_query se occorre verificare dati campione.\n' +
+          '4. Produci un report in markdown con l\'elenco delle tabelle contenenti PII, la classificazione dei rischi e le raccomandazioni di cifratura/anonimizzazione.\n' +
+          '5. Chiudi la connessione con disconnect_database.',
+      },
+    }],
+  }));
+
+  server.registerPrompt('diagnostica-schema', {
+    title: 'Diagnostica architettonica e audit schema',
+    description: 'Esegue un audit completo sullo schema (salute, tabelle orfane/oversize, dipendenze ed ordine di seeding).',
+    argsSchema: {
+      connessione: z.string().describe('Nome della connessione salvata'),
+      db: z.string().describe('Database da analizzare'),
+    },
+  }, ({ connessione, db }) => ({
+    messages: [{
+      role: 'user',
+      content: {
+        type: 'text',
+        text:
+          `Esegui una diagnostica architettonica dello schema sul database "${db}" della connessione "${connessione}".\n\n` +
+          'Procedi così:\n' +
+          `1. Apri la connessione con connect_database (saved: "${connessione}").\n` +
+          `2. Esegui audit_schema e analyze_dependencies su "${db}".\n` +
+          '3. Identifica le tabelle Root, Leaf, le eventuali tabelle orfane o prive di chiavi primarie, ed il punteggio di salute.\n' +
+          '4. Produci un report in markdown con la valutazione della salute dello schema, le raccomandazioni di refactoring e la sequenza ottima di popolamento/seeding.\n' +
+          '5. Chiudi la connessione con disconnect_database.',
       },
     }],
   }));

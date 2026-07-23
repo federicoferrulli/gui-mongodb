@@ -129,10 +129,10 @@ npm run backup -- help    # guida completa
 | Gestione database/collection | tasto destro nella sidebar: crea, rinomina, elimina |
 | Gestione colonne (MySQL) | aggiungi/modifica/elimina colonna (DDL) |
 | Dettagli collection | tab "Dettagli": statistiche, indici, schema/colonne |
-| Diagramma UML | tab "UML": collection corrente e associazioni con le altre |
+| Diagramma UML & Grafo 3D | tab "Grafo 3D" con esploratore tridimensionale, calcolo cammino minimo (BFS), matrice dipendenze/seeding order, audit salute schema, scansione PII/GDPR, filtro tabelle vuote e cache TTL |
 | Aggiornamenti live | change stream MongoDB (badge "● LIVE"); auto-refresh dello schema in sidebar |
-| Layout responsive | drawer laterale ≤900px, supporto touch/orientamento |
-| Gateway MCP per agenti AI | endpoint `/mcp` (Streamable HTTP): esplorazione e query in sola lettura; scritture, drop e cambio del flag `readOnly` solo con doppia conferma umana — vedi `docs/MCP.md` |
+| Layout responsive | drawer laterale ≤900px, supporto touch/orientamento e safe-area-inset per mobile |
+| Gateway MCP per agenti AI | endpoint `/mcp` (Streamable HTTP): esplorazione, query, cammino minimo, dipendenze, scansione PII, audit salute, filtro vuote e grafo JSON; risorsa `graph://` e prompts; scritture/drop solo con doppia conferma umana — vedi `docs/MCP.md` |
 | Backup e ripristino | CLI `npm run backup` (full/incrementale/differenziale, gzip + SHA-256, cloud S3/GCS/Azure, log e notifiche Slack, restore selettivo) e tool MCP `backup_database`/`list_backups`/`restore_backup` |
 
 ### Note
