@@ -226,6 +226,7 @@
               <button class="view-tab active" data-view="data">▤ Dati</button>
               <button class="view-tab" data-view="details">ℹ Dettagli</button>
               <button class="view-tab" data-view="uml">◫ UML</button>
+              <button class="view-tab" data-view="query">⚡ Query & Aggregate</button>
             </div>
           </div>
 
@@ -309,6 +310,99 @@
               <button id="uml-refresh" class="ghost">⟳ Rigenera</button>
             </div>
             <div id="uml-canvas" class="uml-canvas"></div>
+          </div>
+
+          <!-- ------------------- Vista Query & Aggregate ------------------- -->
+          <div id="view-query" class="view-panel hidden">
+            <div class="query-topbar">
+              <div class="query-engine-selector">
+                <label for="query-target-engine">Target Engine:</label>
+                <select id="query-target-engine" class="styled-select">
+                  <option value="auto">⚡ Auto-detect (DB corrente)</option>
+                  <option value="mysql">🐬 MySQL (SQL Runner)</option>
+                  <option value="mongodb">🍃 MongoDB (MQL / Aggregate)</option>
+                  <option value="crossdb">🔀 Cross-DB (Virtual JOIN)</option>
+                </select>
+              </div>
+
+              <div class="query-actions">
+                <button id="query-run-btn" class="primary" title="Esegui query (Ctrl+Invio)">▶ Esegui Query</button>
+                <button id="query-stop-btn" class="danger hidden" title="Annulla esecuzione query">🛑 Annulla</button>
+                <button id="query-snippet-btn" class="ghost" title="Snippet & Template">📚 Snippets</button>
+              </div>
+
+              <div id="query-metrics" class="query-metrics">
+                <span id="query-status-badge" class="badge badge-idle">● In attesa</span>
+                <span id="query-time-metric" class="metric-item hidden">⏱ <strong id="query-time-val">0</strong> ms</span>
+                <span id="query-count-metric" class="metric-item hidden">📊 <strong id="query-count-val">0</strong> record</span>
+              </div>
+            </div>
+
+            <div class="query-layout-body">
+              <!-- Pannello Sinistro: Schema Browser -->
+              <aside id="query-schema-sidebar" class="query-sidebar">
+                <div class="sidebar-title">
+                  <span>Schema Browser</span>
+                  <button id="query-schema-refresh" class="mini-btn" title="Ricarica schema">⟳</button>
+                </div>
+                <div class="sidebar-search" style="padding: 0 10px 8px 10px;">
+                  <input type="text" id="query-schema-search" placeholder="Filtra tabelle/campi..." autocomplete="off" spellcheck="false" />
+                </div>
+                <div id="query-schema-tree" class="query-schema-tree"></div>
+              </aside>
+
+              <div class="resizer" data-resize="query-sidebar"></div>
+
+              <!-- Pannello Centrale/Destro: Editor + Risultati -->
+              <div class="query-main-panel">
+                <!-- Sezione Superiore: Editor -->
+                <div id="query-editor-container" class="query-editor-container">
+                  <div class="editor-header">
+                    <span id="query-editor-title">Editor Query (SQL / MQL JSON)</span>
+                    <div class="editor-tools">
+                      <button id="query-format-btn" class="mini-btn" title="Formatta il codice">✨ Formatta</button>
+                      <button id="query-clear-btn" class="mini-btn" title="Pulisci editor">🧹 Pulisci</button>
+                    </div>
+                  </div>
+                  <div class="editor-body">
+                    <textarea id="query-editor-input" spellcheck="false" placeholder="-- Inserisci query SQL o pipeline MQL in formato JSON&#10;-- Es. SELECT * FROM users WHERE status = 'active';&#10;-- Oppure: [ { &quot;$match&quot;: { &quot;status&quot;: &quot;active&quot; } } ]"></textarea>
+                  </div>
+                </div>
+
+                <div class="resizer-v" id="query-editor-resizer"></div>
+
+                <!-- Sezione Inferiore: Risultati -->
+                <div id="query-results-container" class="query-results-container">
+                  <div class="results-header">
+                    <div class="results-view-mode">
+                      <button id="res-mode-table" class="mode-btn active" title="Vista Tabella">📊 Tabella</button>
+                      <button id="res-mode-json" class="mode-btn" title="Vista JSON Tree">🌳 JSON Tree</button>
+                    </div>
+                    <div class="results-actions">
+                      <button id="query-export-csv" class="mini-btn" title="Esporta CSV">📥 CSV</button>
+                      <button id="query-export-json" class="mini-btn" title="Esporta JSON">📥 JSON</button>
+                      <button id="query-export-sql" class="mini-btn" title="Esporta SQL">📥 SQL</button>
+                    </div>
+                  </div>
+
+                  <div id="query-error-box" class="error hidden" style="margin: 10px;"></div>
+
+                  <div id="query-results-body" class="query-results-body">
+                    <!-- Vista Tabella -->
+                    <div id="query-table-view" class="results-panel-view">
+                      <table id="query-result-table" class="query-table">
+                        <thead></thead>
+                        <tbody></tbody>
+                      </table>
+                    </div>
+                    <!-- Vista JSON Tree -->
+                    <div id="query-json-view" class="results-panel-view hidden">
+                      <div id="query-json-tree" class="json-tree-container"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
           </main>

@@ -116,6 +116,9 @@ npm run backup -- help    # guida completa
 | Vista tabellare | colonne = unione delle chiavi (Mongo) o colonne della tabella (MySQL) |
 | Query `find` / WHERE | filtro e sort nella toolbar (JSON/EJSON per Mongo, clausola WHERE + `ORDER BY` per MySQL) |
 | Query `aggregate` / SQL Raw | pipeline di aggregazione (Mongo) o SQL libero (MySQL) |
+| ⚡ Query & Aggregate Engine | layout a 3 sezioni (Schema Browser, Editor, Risultati), supporto SQL/MQL, doppia vista (Tabella/JSON Tree) e Virtual JOINs |
+| 🔀 Virtual JOINs Cross-DB | unione dati in memoria tra tabelle MySQL e collezioni MongoDB in un'unica query logica |
+| 📚 Snippet Library | template pronti all'uso (JOIN, GROUP BY, $lookup, $unwind) ed export risultati CSV/JSON/SQL |
 | Piano di esecuzione | `explain` (Mongo) / `EXPLAIN` (MySQL) sulla query corrente |
 | Cronologia query | query eseguite, ripetibili con un click (persistita per collection) |
 | Ordinamento / Paginazione | click sull'intestazione; barra in basso (25/50/100/200 per pagina) |

@@ -126,5 +126,5 @@ function umlBoxSvg(c, p, isFocal) {
 }
 
 export function initUml() {
-  $('#uml-refresh').addEventListener('click', () => loadUml(true));
+  $('#uml-refresh')?.addEventListener('click', () => loadUml(true));
 }

@@ -24,6 +24,7 @@ const readline = require('readline');
 const DbFactory = require('./db/DbFactory');
 const { openSshTunnel } = require('./db/SshTunnel');
 const { attachMcp } = require('./mcp/McpGateway');
+const VirtualJoinEngine = require('./db/VirtualJoinEngine');
 
 const PORT = process.env.PORT || 3030;
 
@@ -644,6 +645,85 @@ io.on('connection', (socket) => {
   delegate('doc:replace', (strategy, p) => strategy.docReplace(p.db, p.coll, p));
   delegate('doc:delete', (strategy, p) => strategy.docDelete(p.db, p.coll, p));
   delegate('collection:deleteMany', (strategy, p) => strategy.collectionDeleteMany(p.db, p.coll, p));
+
+  // --- Esecutore dinamico Query & Virtual JOINs -------------------------------
+  safeOn('query:execute', async (payload, cb) => {
+    const tabId = normTabId(payload.tabId);
+    const session = sessions.get(tabId);
+    if (!session || !session.strategy) {
+      throw new Error('Nessuna connessione attiva al database per questo tab.');
+    }
+
+    let { code, engine, db, coll } = payload;
+    const codeStr = String(code || '').trim();
+
+    if (!codeStr) {
+      throw new Error('Codice query vuoto.');
+    }
+
+    // Modalità Cross-DB (Virtual Join)
+    if (engine === 'crossdb' || codeStr.includes('"virtualJoin"')) {
+      let spec;
+      try {
+        spec = JSON.parse(codeStr);
+      } catch (err) {
+        throw new Error('La query Virtual Join deve essere un oggetto JSON valido: ' + err.message);
+      }
+      const docs = await VirtualJoinEngine.execute(spec, session.strategy, session.strategy);
+      return cb({ ok: true, docs, data: docs });
+    }
+
+    // Estrazione automatica della collezione/tabella dal FROM della query SQL (es. SELECT * FROM pippo)
+    const sqlFromMatch = codeStr.match(/FROM\s+[`"]?([a-zA-Z0-9_\-]+)[`"]?/i);
+    const extractedColl = sqlFromMatch ? sqlFromMatch[1] : null;
+    const targetColl = coll || extractedColl;
+    const targetDb = db || session.strategy.currentDb || 'admin';
+
+    // Modalità SQL su MySQL
+    if (engine === 'mysql' || session.strategy.type === 'mysql') {
+      const res = await session.strategy.collectionAggregate(targetDb, targetColl, { pipeline: codeStr });
+      return cb({ ok: true, ...res, data: res.docs });
+    }
+
+    // Modalità NoSQL (MongoDB)
+    if (engine === 'mongodb' || session.strategy.type === 'mongodb') {
+      let res;
+      if (codeStr.startsWith('[')) {
+        // Pipeline MQL EJSON
+        if (!targetColl) throw new Error('Seleziona una collezione dallo Schema Browser o apri un tab collezione.');
+        res = await session.strategy.collectionAggregate(targetDb, targetColl, { pipeline: codeStr });
+      } else if (codeStr.startsWith('{')) {
+        // MQL Filter JSON
+        let parsed;
+        try {
+          parsed = JSON.parse(codeStr);
+        } catch (e) {
+          throw new Error('Filtro JSON MongoDB non valido: ' + e.message);
+        }
+        if (!targetColl) throw new Error('Seleziona una collezione dallo Schema Browser o apri un tab collezione.');
+        res = await session.strategy.collectionFind(targetDb, targetColl, parsed);
+      } else if (sqlFromMatch) {
+        // Query SQL automatica tradotta su MongoDB (es. SELECT * FROM pippo)
+        if (!targetColl) throw new Error('Collezione non specificata nella clausola FROM.');
+        
+        let whereStr = '';
+        const whereMatch = codeStr.match(/WHERE\s+(.+?)(?:\s+ORDER\s+BY|\s+LIMIT|$)/i);
+        if (whereMatch) whereStr = whereMatch[1].trim();
+
+        let limitNum = 50;
+        const limitMatch = codeStr.match(/LIMIT\s+(\d+)/i);
+        if (limitMatch) limitNum = parseInt(limitMatch[1], 10);
+
+        res = await session.strategy.collectionFind(targetDb, targetColl, { filter: whereStr, limit: limitNum });
+      } else {
+        if (!targetColl) throw new Error('Seleziona una collezione dallo Schema Browser o specifica una query valida.');
+        res = await session.strategy.collectionFind(targetDb, targetColl, { filter: '' });
+      }
+      return cb({ ok: true, ...res, data: res.docs });
+    }
+
+    throw new Error('Target Engine non supportato.');
+  });
 
   // --- Export / import di collection e tabelle ---------------------------------
   // Export: il client richiede blocchi successivi (skip/limit) e assembla il
