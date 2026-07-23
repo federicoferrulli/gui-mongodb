@@ -579,6 +579,20 @@
     </div>
   </div>
 
+  <!-- ===================== Modale Export Mermaid ===================== -->
+  <div id="mermaid-modal" class="overlay hidden">
+    <div class="modal wide">
+      <h2>Diagramma ER (Mermaid)</h2>
+      <div class="form-row">
+        <textarea id="mermaid-textarea" rows="12" spellcheck="false" readonly style="width:100%; font-family:monospace; font-size:12px; background:var(--bg-1,#131518); color:var(--fg,#e1e4e8); padding:10px; border-radius:6px; border:1px solid var(--border,#2a2e35); resize:vertical;"></textarea>
+      </div>
+      <div class="modal-actions">
+        <button id="mermaid-modal-close" class="ghost">Chiudi</button>
+        <button id="mermaid-modal-copy" class="primary">📋 Copia negli appunti</button>
+      </div>
+    </div>
+  </div>
+
   <datalist id="mysql-types">
     <option value="INT"></option>
     <option value="INT UNSIGNED"></option>

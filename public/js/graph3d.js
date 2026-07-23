@@ -63,7 +63,8 @@ export function renderGraph3d() {
     return;
   }
 
-  graphInstance = ForceGraph3D()(canvas)
+  // preserveDrawingBuffer per consentire a toDataURL() l'export in PNG
+  graphInstance = ForceGraph3D({ preserveDrawingBuffer: true })(canvas)
     .graphData(graphData)
     .nodeId('id')
     .nodeLabel((node) => `<div style="background:rgba(15,20,28,0.9); padding:6px 10px; border-radius:4px; border:1px solid #4a9eff; font-family:sans-serif; color:#fff;"><b>${esc(node.name)}</b><br/><small style="color:#aaa;">${node.fieldCount} campi</small></div>`)
@@ -75,7 +76,6 @@ export function renderGraph3d() {
     .linkColor(() => '#4a9eff')
     .linkWidth(1.5)
     .onNodeClick((node) => {
-      // Centra fotocamera sul nodo 3D
       const distance = 120;
       const distRatio = 1 + distance / Math.hypot(node.x, node.y, node.z || 1);
       graphInstance.cameraPosition(
@@ -84,7 +84,6 @@ export function renderGraph3d() {
         1200
       );
 
-      // Mostra le informazioni dettagliate sul pannello laterale destro
       showTableDetailsPanel(node.name);
     });
 
@@ -116,16 +115,16 @@ function showTableDetailsPanel(tableName) {
   const panel = $('#graph3d-side-panel');
   const title = $('#graph3d-panel-title');
   const content = $('#graph3d-panel-content');
-  if (!panel || !currentSchemaData) return;
+  const schema = state.dbSchema || currentSchemaData;
+  if (!panel || !schema) return;
 
-  const collection = currentSchemaData.collections.find((c) => c.name === tableName);
+  const collection = schema.collections.find((c) => c.name === tableName);
   if (!collection) return;
 
   title.textContent = collection.name;
 
   let html = '';
 
-  // Sezione Campi/Colonne
   html += `<div class="side-panel-section">
     <h4>Campi / Colonne (${collection.fields.length})</h4>
     <ul class="side-panel-fields">`;
@@ -142,8 +141,7 @@ function showTableDetailsPanel(tableName) {
   }
   html += `</ul></div>`;
 
-  // Sezione Relazioni
-  const rels = (currentSchemaData.relations || []).filter((r) => r.from === tableName || r.to === tableName);
+  const rels = (schema.relations || []).filter((r) => r.from === tableName || r.to === tableName);
   if (rels.length) {
     html += `<div class="side-panel-section">
       <h4>Relazioni (${rels.length})</h4>
@@ -160,7 +158,6 @@ function showTableDetailsPanel(tableName) {
     html += `</ul></div>`;
   }
 
-  // Sezione Azioni Rapide
   html += `<div class="side-panel-actions">
     <button type="button" id="panel-btn-open-grid" class="primary" style="flex:1;">▤ Apri Tab Dati</button>
     <button type="button" id="panel-btn-open-uml" class="ghost" style="flex:1;">◫ Apri Tab UML</button>
@@ -169,7 +166,6 @@ function showTableDetailsPanel(tableName) {
   content.innerHTML = html;
   panel.classList.remove('hidden');
 
-  // Event listener per saltare ad un altro nodo dal pannello
   content.querySelectorAll('[data-jump-node]').forEach((el) => {
     el.addEventListener('click', () => {
       const targetName = el.dataset.jumpNode;
@@ -188,7 +184,6 @@ function showTableDetailsPanel(tableName) {
     });
   });
 
-  // Event listener per "Apri Tab Dati"
   const openGridBtn = $('#panel-btn-open-grid');
   if (openGridBtn) {
     openGridBtn.addEventListener('click', () => {
@@ -199,7 +194,6 @@ function showTableDetailsPanel(tableName) {
     });
   }
 
-  // Event listener per "Apri Tab UML"
   const openUmlBtn = $('#panel-btn-open-uml');
   if (openUmlBtn) {
     openUmlBtn.addEventListener('click', () => {
@@ -209,6 +203,34 @@ function showTableDetailsPanel(tableName) {
       }
     });
   }
+}
+
+function sanitizeMermaid(str) {
+  if (!str) return 'entity';
+  return String(str).replace(/[^a-zA-Z0-9_]/g, '_');
+}
+
+function buildMermaidDiagram() {
+  const schema = state.dbSchema || currentSchemaData;
+  if (!schema || !schema.collections || !schema.collections.length) return '';
+  let lines = ['erDiagram'];
+  for (const c of schema.collections) {
+    const cName = sanitizeMermaid(c.name);
+    lines.push(`    ${cName} {`);
+    for (const f of c.fields || []) {
+      const typeStr = (f.types && f.types[0]) ? sanitizeMermaid(f.types[0]) : 'string';
+      const fName = sanitizeMermaid(f.name);
+      lines.push(`        ${typeStr} ${fName}`);
+    }
+    lines.push('    }');
+  }
+  for (const r of schema.relations || []) {
+    const fromName = sanitizeMermaid(r.from);
+    const toName = sanitizeMermaid(r.to);
+    const fieldName = sanitizeMermaid(r.field);
+    lines.push(`    ${fromName} ||--o{ ${toName} : "${fieldName}"`);
+  }
+  return lines.join('\n');
 }
 
 function hashString(str) {
@@ -253,7 +275,8 @@ export function initGraph3d() {
   if (searchInput) {
     searchInput.addEventListener('input', (e) => {
       const query = e.target.value.trim().toLowerCase();
-      if (!query || !graphInstance || !currentSchemaData) return;
+      const schema = state.dbSchema || currentSchemaData;
+      if (!query || !graphInstance || !schema) return;
       const targetNode = graphInstance.graphData().nodes.find((n) => n.name.toLowerCase().includes(query));
       if (targetNode && targetNode.x != null) {
         const distance = 100;
@@ -290,37 +313,68 @@ export function initGraph3d() {
     refreshBtn.addEventListener('click', () => loadGraph3d(true));
   }
 
+  // Export PNG corretto con re-render WebGL e trigger download
   const exportPngBtn = $('#graph3d-export-png');
   if (exportPngBtn) {
     exportPngBtn.addEventListener('click', () => {
-      const canvasEl = $('#graph3d-canvas canvas');
-      if (!canvasEl) return;
-      const link = document.createElement('a');
-      link.download = `schema-${state.db || 'db'}-3d.png`;
-      link.href = canvasEl.toDataURL('image/png');
-      link.click();
+      if (!graphInstance) return;
+      try {
+        const renderer = graphInstance.renderer();
+        const scene = graphInstance.scene();
+        const camera = graphInstance.camera();
+        renderer.render(scene, camera);
+        const dataUrl = renderer.domElement.toDataURL('image/png');
+        const link = document.createElement('a');
+        link.download = `schema-${state.db || 'db'}-3d.png`;
+        link.href = dataUrl;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        notify('Immagine PNG esportata con successo!');
+      } catch (err) {
+        console.error('Errore export PNG:', err);
+        notify('Impossibile esportare l\'immagine PNG.');
+      }
     });
   }
 
+  // Export Mermaid corretto con modale dedicata
   const exportMermaidBtn = $('#graph3d-export-mermaid');
   if (exportMermaidBtn) {
     exportMermaidBtn.addEventListener('click', () => {
-      if (!currentSchemaData) return;
-      let mermaid = 'erDiagram\n';
-      for (const c of currentSchemaData.collections) {
-        mermaid += `    ${c.name} {\n`;
-        for (const f of c.fields || []) {
-          mermaid += `        ${(f.types || []).join('|')} ${f.name}\n`;
-        }
-        mermaid += '    }\n';
+      const mermaidText = buildMermaidDiagram();
+      if (!mermaidText) {
+        notify('Nessun dato di schema disponibile per Mermaid.');
+        return;
       }
-      for (const r of currentSchemaData.relations || []) {
-        mermaid += `    ${r.from} ||--o{ ${r.to} : "${r.field}"\n`;
+      const textarea = $('#mermaid-textarea');
+      const modal = $('#mermaid-modal');
+      if (textarea && modal) {
+        textarea.value = mermaidText;
+        modal.classList.remove('hidden');
       }
-      navigator.clipboard.writeText(mermaid).then(() => {
+    });
+  }
+
+  const mermaidCloseBtn = $('#mermaid-modal-close');
+  if (mermaidCloseBtn) {
+    mermaidCloseBtn.addEventListener('click', () => {
+      const modal = $('#mermaid-modal');
+      if (modal) modal.classList.add('hidden');
+    });
+  }
+
+  const mermaidCopyBtn = $('#mermaid-modal-copy');
+  if (mermaidCopyBtn) {
+    mermaidCopyBtn.addEventListener('click', () => {
+      const textarea = $('#mermaid-textarea');
+      if (!textarea) return;
+      textarea.select();
+      navigator.clipboard.writeText(textarea.value).then(() => {
         notify('Diagramma Mermaid copiato negli appunti!');
       }).catch(() => {
-        prompt('Diagramma Mermaid:', mermaid);
+        document.execCommand('copy');
+        notify('Diagramma Mermaid copiato negli appunti!');
       });
     });
   }
