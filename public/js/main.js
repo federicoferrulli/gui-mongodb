@@ -20,6 +20,7 @@ import { initLive } from './live.js';
 import { initResponsive } from './responsive.js';
 import { initExportImport } from './exportimport.js';
 import { initVault } from './vault.js';
+import { initQueryTab, loadQueryTab } from './query-tab.js';
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -40,6 +41,10 @@ export function setView(view) {
   if (view === 'details') loadDetails();
   if (view === 'uml') loadUml(false);
   if (view === 'graph3d') loadGraph3d(false);
+  $('#view-query').classList.toggle('hidden', view !== 'query');
+  if (view === 'details') loadDetails();
+  if (view === 'uml') loadUml(false);
+  if (view === 'query') loadQueryTab();
 }
 
 document.querySelectorAll('.view-tab').forEach((tab) =>
@@ -97,6 +102,7 @@ initResizers();
 initResponsive();
 initExportImport();
 initVault();
+initQueryTab();
 
 
 // Stato iniziale: nessun tab aperto, schermata di benvenuto.
