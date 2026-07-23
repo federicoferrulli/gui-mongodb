@@ -1,4 +1,10 @@
 :root {
+  /* Safe Area Insets (iOS Notch / Dynamic Island / Home Indicator) */
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+
   /* Palette ispirata a VSCode Dark+ / Dark Modern */
   --bg: #12121f;          /* sfondo "editor" (workspace, griglia) */
   --bg-2: #181829;        /* sidebar e pannelli */
@@ -936,6 +942,20 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 
   /* Dettagli: statistiche e indici in colonna singola */
   .details-wrap { grid-template-columns: 1fr; padding: 12px; }
+
+  /* Grafo 3D: toolbar a riga singola con scorrimento orizzontale */
+  .graph3d-bar {
+    padding: 6px 10px;
+    gap: 6px;
+  }
+  .graph3d-bar input {
+    width: 150px;
+  }
+  .graph3d-bar select,
+  .graph3d-bar button {
+    font-size: 0.8rem;
+    padding: 5px 8px;
+  }
 }
 
 /* --- Telefoni stretti --------------------------------------------------- */
@@ -950,6 +970,31 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   .form-row { flex-direction: column; gap: 8px; }
   .form-row label.small { flex: 1; }
   .connect-actions { flex-wrap: wrap; }
+
+  /* Grafo 3D e side panel per smartphone stretti */
+  .graph3d-bar {
+    padding: 6px 8px;
+    gap: 6px;
+    scrollbar-width: none;
+  }
+  .graph3d-bar::-webkit-scrollbar {
+    display: none;
+  }
+  .graph3d-bar input {
+    width: 140px;
+  }
+  .graph3d-bar select,
+  .graph3d-bar button {
+    font-size: 0.78rem;
+    padding: 5px 8px;
+  }
+  .graph3d-side-panel {
+    width: 100% !important;
+    max-width: 100%;
+    border-left: none;
+    border-top: 1px solid var(--border, #2a2e35);
+    z-index: 50;
+  }
 }
 
 /* --- Telefoni in landscape: poca altezza, interfaccia compatta ---------- */
@@ -1117,11 +1162,22 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .graph3d-bar {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
+  gap: 8px;
+  padding: 8px calc(12px + var(--sar)) 8px calc(12px + var(--sal));
   background: var(--bg-2, #1b1e23);
   border-bottom: 1px solid var(--border, #2a2e35);
   z-index: 10;
+  overflow-x: auto;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+.graph3d-bar input,
+.graph3d-bar select,
+.graph3d-bar button {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 .graph3d-bar input,
 .graph3d-bar select {
@@ -1133,7 +1189,7 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   font-size: 0.85rem;
 }
 .graph3d-bar input {
-  width: 210px;
+  width: 170px;
 }
 .graph3d-bar button.active {
   background: var(--accent, #4a9eff);
@@ -1170,6 +1226,7 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   flex-direction: column;
   z-index: 20;
   transition: transform 0.25s ease;
+  padding-bottom: var(--sab);
 }
 .graph3d-side-panel.hidden {
   transform: translateX(100%);
@@ -1260,4 +1317,47 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   gap: 8px;
   margin-top: 15px;
 }
+
+/* ===================== Audit & Diff Styles ===================== */
+.audit-score-card {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  padding: 14px 18px;
+  background: var(--bg-1, #131518);
+  border: 1px solid var(--border, #2a2e35);
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+.audit-score-val {
+  font-size: 2.2rem;
+  font-weight: bold;
+}
+.audit-score-good { color: #00e676; }
+.audit-score-warn { color: #f5a623; }
+.audit-score-bad { color: #e5534b; }
+
+.audit-issue-item {
+  padding: 10px 14px;
+  background: var(--bg-1, #131518);
+  border-left: 4px solid #4a9eff;
+  border-radius: 4px;
+  margin-bottom: 10px;
+}
+.audit-issue-item.warn { border-left-color: #f5a623; }
+.audit-issue-item.bad { border-left-color: #e5534b; }
+.audit-issue-title { font-weight: bold; color: var(--fg, #e1e4e8); margin-bottom: 4px; }
+.audit-issue-desc { font-size: 0.88rem; color: var(--fg-dim, #8b949e); }
+
+.diff-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: bold;
+}
+.diff-added { background: rgba(0, 230, 118, 0.2); color: #00e676; }
+.diff-removed { background: rgba(229, 83, 75, 0.2); color: #e5534b; }
+.diff-changed { background: rgba(245, 166, 35, 0.2); color: #f5a623; }
+
 

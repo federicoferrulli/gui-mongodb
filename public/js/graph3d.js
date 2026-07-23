@@ -7,7 +7,8 @@ let graphInstance = null;
 let currentSchemaData = null;
 let selectedNodeId = null;
 let autoRotateActive = false;
-let autoRotateAnimId = null;
+let is2DMode = false;
+let showImplicitRelations = true;
 let currentSearchQuery = '';
 
 export function loadGraph3d(force) {
@@ -35,9 +36,11 @@ export function loadGraph3d(force) {
 
 export function renderGraph3d() {
   const canvas = $('#graph3d-canvas');
-  const schema = state.dbSchema;
+  const schema = state.dbSchema || currentSchemaData;
   if (!schema || !schema.collections || !schema.collections.length) {
-    canvas.innerHTML = '<div class="uml-msg" style="color:#aaa; padding:20px;">Nessuna tabella/collection trovata nel database.</div>';
+    if (canvas) {
+      canvas.innerHTML = '<div class="uml-msg" style="color:#aaa; padding:20px;">Nessuna tabella/collection trovata nello schema.</div>';
+    }
     return;
   }
 
@@ -47,21 +50,27 @@ export function renderGraph3d() {
   const colorMode = ($('#graph3d-color-mode') && $('#graph3d-color-mode').value) || 'prefix';
   const hopFilter = ($('#graph3d-hop-filter') && $('#graph3d-hop-filter').value) || 'all';
 
-  // Calcolo delle adiacenze (grado) e mappa dei vicini
   const neighborsMap = new Map();
   const degreeMap = new Map();
   for (const c of schema.collections) {
     neighborsMap.set(c.name, new Set());
     degreeMap.set(c.name, 0);
   }
-  for (const r of schema.relations || []) {
+
+  const allRelations = [...(schema.relations || [])];
+
+  if (showImplicitRelations) {
+    const implicitRels = detectImplicitRelations(schema.collections, allRelations);
+    allRelations.push(...implicitRels);
+  }
+
+  for (const r of allRelations) {
     if (neighborsMap.has(r.from)) neighborsMap.get(r.from).add(r.to);
     if (neighborsMap.has(r.to)) neighborsMap.get(r.to).add(r.from);
     degreeMap.set(r.from, (degreeMap.get(r.from) || 0) + 1);
     degreeMap.set(r.to, (degreeMap.get(r.to) || 0) + 1);
   }
 
-  // Seleziona nodi entro N hop se un nodo è selezionato e hopFilter != 'all'
   let activeNodesSet = null;
   if (selectedNodeId && hopFilter !== 'all') {
     const maxHops = parseInt(hopFilter, 10) || 1;
@@ -78,7 +87,7 @@ export function renderGraph3d() {
       } else {
         val = Math.max(3, Math.min(15, (c.fields && c.fields.length) || 5));
       }
-      return {
+      const nodeObj = {
         id: c.name,
         name: c.name,
         degree,
@@ -86,16 +95,21 @@ export function renderGraph3d() {
         fields: c.fields || [],
         val,
       };
+      if (is2DMode) {
+        nodeObj.fz = 0;
+      }
+      return nodeObj;
     });
 
   const nodeIdsSet = new Set(nodes.map((n) => n.id));
-  const edges = (schema.relations || [])
+  const edges = allRelations
     .filter((r) => nodeIdsSet.has(r.from) && nodeIdsSet.has(r.to))
     .map((r) => ({
       source: r.from,
       target: r.to,
       label: r.field,
       many: r.many,
+      implicit: !!r.implicit,
     }));
 
   const graphData = { nodes, links: edges };
@@ -112,7 +126,6 @@ export function renderGraph3d() {
     .nodeId('id')
     .nodeLabel((node) => `<div style="background:rgba(15,20,28,0.95); padding:8px 12px; border-radius:6px; border:1px solid #4a9eff; font-family:sans-serif; color:#fff; font-size:12px;"><b>${esc(node.name)}</b><br/><small style="color:#aaa;">${node.fieldCount} campi • ${node.degree} relazioni</small></div>`)
     .nodeColor((node) => {
-      // Dimming per nodi non selezionati/non collegati
       if (selectedNodeId && selectedNodeId !== node.id && !isNeighbor(selectedNodeId, node.id, neighborsMap)) {
         return 'rgba(50, 55, 65, 0.25)';
       }
@@ -123,10 +136,11 @@ export function renderGraph3d() {
       return prefixColors[Math.abs(hashString(prefix)) % prefixColors.length];
     })
     .nodeRelSize(4)
-    .linkDirectionalParticles(2)
-    .linkDirectionalParticleSpeed(0.006)
-    .linkLabel((link) => `<span style="color:#aaa;">${esc(link.label)}${link.many ? ' [N]' : ''}</span>`)
+    .linkDirectionalParticles((link) => (link.implicit ? 4 : 2))
+    .linkDirectionalParticleSpeed((link) => (link.implicit ? 0.012 : 0.006))
+    .linkLabel((link) => `<span style="color:#aaa;">${esc(link.label)}${link.implicit ? ' (Implicita)' : ''}${link.many ? ' [N]' : ''}</span>`)
     .linkColor((link) => {
+      if (link.implicit) return '#bd10e0';
       const srcId = typeof link.source === 'object' ? link.source.id : link.source;
       const tgtId = typeof link.target === 'object' ? link.target.id : link.target;
       if (selectedNodeId && srcId !== selectedNodeId && tgtId !== selectedNodeId) {
@@ -141,18 +155,21 @@ export function renderGraph3d() {
     })
     .onNodeClick((node) => {
       selectedNodeId = node.id;
-      const distance = 120;
-      const distRatio = 1 + distance / Math.hypot(node.x, node.y, node.z || 1);
+      const distance = is2DMode ? 200 : 120;
+      const distRatio = 1 + distance / Math.hypot(node.x, node.y, (is2DMode ? 0 : node.z) || 1);
       graphInstance.cameraPosition(
-        { x: node.x * distRatio, y: node.y * distRatio, z: (node.z || 0) * distRatio },
-        { x: node.x, y: node.y, z: node.z || 0 },
+        { x: node.x * distRatio, y: node.y * distRatio, z: is2DMode ? 300 : (node.z || 0) * distRatio },
+        { x: node.x, y: node.y, z: is2DMode ? 0 : node.z || 0 },
         1200
       );
 
       showTableDetailsPanel(node.name, currentSearchQuery);
-      // Aggiorna gli stili di dimming e ampiezza archi
       graphInstance.nodeColor(graphInstance.nodeColor()).linkWidth(graphInstance.linkWidth());
     });
+
+  if (is2DMode) {
+    graphInstance.cameraPosition({ x: 0, y: 0, z: 350 }, { x: 0, y: 0, z: 0 }, 500);
+  }
 
   if (typeof THREE !== 'undefined') {
     graphInstance.nodeThreeObject((node) => {
@@ -169,7 +186,6 @@ export function renderGraph3d() {
     graphInstance.nodeThreeObjectExtend(true);
   }
 
-  // Ripristina l'auto-rotate se attivo
   if (autoRotateActive && graphInstance.controls()) {
     graphInstance.controls().autoRotate = true;
     graphInstance.controls().autoRotateSpeed = 1.5;
@@ -184,16 +200,47 @@ export function renderGraph3d() {
   resizeObserver.observe(canvas);
 }
 
+function detectImplicitRelations(collections, existingRelations) {
+  const existingSet = new Set((existingRelations || []).map((r) => `${r.from}.${r.field}->${r.to}`));
+  const implicit = [];
+
+  for (const c of collections) {
+    for (const f of c.fields || []) {
+      if (f.name === '_id' || f.pk) continue;
+      const low = f.name.toLowerCase();
+      const match = low.match(/^(.+?)_?ids?$/);
+      if (match) {
+        const base = match[1];
+        const target = collections.find((x) => x.name.toLowerCase() === base || x.name.toLowerCase() === base + 's');
+        if (target && target.name !== c.name) {
+          const key = `${c.name}.${f.name}->${target.name}`;
+          if (!existingSet.has(key)) {
+            implicit.push({
+              from: c.name,
+              field: f.name,
+              to: target.name,
+              many: true,
+              implicit: true,
+            });
+            existingSet.add(key);
+          }
+        }
+      }
+    }
+  }
+  return implicit;
+}
+
 function getTablePrefix(name) {
   const parts = name.split('_');
   return parts.length > 1 ? parts[0] : name;
 }
 
 function getDegreeColor(degree) {
-  if (degree <= 1) return '#4a9eff'; // Blu tenue
-  if (degree <= 3) return '#50e3c2'; // Turchese
-  if (degree <= 5) return '#f5a623'; // Arancione
-  return '#e5534b'; // Rosso brillante per nodi hub centrati
+  if (degree <= 1) return '#4a9eff';
+  if (degree <= 3) return '#50e3c2';
+  if (degree <= 5) return '#f5a623';
+  return '#e5534b';
 }
 
 function isNeighbor(id1, id2, map) {
@@ -321,6 +368,260 @@ function showTableDetailsPanel(tableName, highlightQuery) {
   }
 }
 
+// 1. Health Check & Schema Audit Algorithm
+function runSchemaAudit() {
+  const schema = state.dbSchema || currentSchemaData;
+  if (!schema || !schema.collections || !schema.collections.length) {
+    notify('Nessuno schema disponibile per la diagnostica.');
+    return;
+  }
+
+  const issues = [];
+  let score = 100;
+
+  const neighborsMap = new Map();
+  for (const c of schema.collections) neighborsMap.set(c.name, 0);
+  for (const r of schema.relations || []) {
+    neighborsMap.set(r.from, (neighborsMap.get(r.from) || 0) + 1);
+    neighborsMap.set(r.to, (neighborsMap.get(r.to) || 0) + 1);
+  }
+
+  const orphans = schema.collections.filter((c) => (neighborsMap.get(c.name) || 0) === 0);
+  if (orphans.length) {
+    score -= Math.min(30, orphans.length * 10);
+    issues.push({
+      type: 'warn',
+      title: `Tabelle Orfane (${orphans.length})`,
+      desc: `Le seguenti tabelle non hanno alcuna relazione dichiarata o implicita: ${orphans.map((o) => `<b>${esc(o.name)}</b>`).join(', ')}.`,
+    });
+  }
+
+  const oversized = schema.collections.filter((c) => c.fields && c.fields.length > 25);
+  if (oversized.length) {
+    score -= Math.min(20, oversized.length * 5);
+    issues.push({
+      type: 'warn',
+      title: `Tabelle Molto Grandi (${oversized.length})`,
+      desc: `Tabelle con più di 25 colonne (potenziale refactoring): ${oversized.map((o) => `<b>${esc(o.name)} (${o.fields.length} campi)</b>`).join(', ')}.`,
+    });
+  }
+
+  const missingPk = schema.collections.filter((c) => !(c.fields || []).some((f) => f.pk || f.name === '_id'));
+  if (missingPk.length) {
+    score -= Math.min(30, missingPk.length * 15);
+    issues.push({
+      type: 'bad',
+      title: `Tabelle senza Chiave Primaria (${missingPk.length})`,
+      desc: `Tabelle prive di PK esplicita o campo _id: ${missingPk.map((m) => `<b>${esc(m.name)}</b>`).join(', ')}.`,
+    });
+  }
+
+  score = Math.max(0, score);
+  let scoreClass = 'audit-score-good';
+  if (score < 80) scoreClass = 'audit-score-warn';
+  if (score < 50) scoreClass = 'audit-score-bad';
+
+  let html = `<div class="audit-score-card">
+    <div class="audit-score-val ${scoreClass}">${score}%</div>
+    <div>
+      <h3 style="margin:0; color:var(--fg,#e1e4e8);">Punteggio Salute Schema</h3>
+      <small style="color:var(--fg-dim,#8b949e);">${schema.collections.length} tabelle analizzate, ${schema.relations ? schema.relations.length : 0} relazioni controllate.</small>
+    </div>
+  </div>`;
+
+  if (!issues.length) {
+    html += `<div class="audit-issue-item" style="border-left-color:#00e676;">
+      <div class="audit-issue-title" style="color:#00e676;">✓ Nessun problema rilevato!</div>
+      <div class="audit-issue-desc">Lo schema rispetta tutte le best practice di strutturazione.</div>
+    </div>`;
+  } else {
+    for (const issue of issues) {
+      html += `<div class="audit-issue-item ${issue.type}">
+        <div class="audit-issue-title">${issue.title}</div>
+        <div class="audit-issue-desc">${issue.desc}</div>
+      </div>`;
+    }
+  }
+
+  const modalContent = $('#audit-content');
+  if (modalContent) {
+    modalContent.innerHTML = html;
+    $('#audit-modal').classList.remove('hidden');
+  }
+}
+
+// 3. Salva File Locale JSON (Download su Disco)
+function saveSchemaSnapshotLocal() {
+  const schema = state.dbSchema || currentSchemaData;
+  if (!schema) {
+    notify('Nessuno schema disponibile da salvare.');
+    return;
+  }
+  const payload = {
+    db: state.db || 'database',
+    dbType: state.dbType || 'mysql',
+    timestamp: new Date().toISOString(),
+    collections: schema.collections,
+    relations: schema.relations || [],
+  };
+
+  const jsonText = JSON.stringify(payload, null, 2);
+  const blob = new Blob([jsonText], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `schema-snapshot-${state.db || 'db'}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  notify(`File snapshot "schema-snapshot-${state.db || 'db'}.json" salvato sul tuo computer!`);
+}
+
+// Diff tra Schema Attivo e File JSON locale caricato
+function renderDiffReport(snapshot) {
+  const activeSchema = state.dbSchema || currentSchemaData;
+  if (!activeSchema || !snapshot || !snapshot.collections) return;
+
+  const snapTables = new Map(snapshot.collections.map((c) => [c.name, c]));
+  const activeTables = new Map(activeSchema.collections.map((c) => [c.name, c]));
+
+  const addedTables = [];
+  const removedTables = [];
+  const modifiedTables = [];
+
+  for (const [name, activeCol] of activeTables.entries()) {
+    if (!snapTables.has(name)) {
+      addedTables.push(name);
+    } else {
+      const snapCol = snapTables.get(name);
+      const snapFields = new Set((snapCol.fields || []).map((f) => f.name));
+      const activeFields = new Set((activeCol.fields || []).map((f) => f.name));
+      const addedFields = [...activeFields].filter((f) => !snapFields.has(f));
+      const removedFields = [...snapFields].filter((f) => !activeFields.has(f));
+
+      if (addedFields.length || removedFields.length) {
+        modifiedTables.push({ name, addedFields, removedFields });
+      }
+    }
+  }
+
+  for (const name of snapTables.keys()) {
+    if (!activeTables.has(name)) {
+      removedTables.push(name);
+    }
+  }
+
+  let html = `<div style="font-size:0.95rem; margin-bottom:12px; color:var(--fg-dim,#8b949e);">Risultato del confronto tra lo schema corrente ed il file JSON locale.</div>`;
+
+  if (!addedTables.length && !removedTables.length && !modifiedTables.length) {
+    html += `<div class="audit-issue-item" style="border-left-color:#00e676;">
+      <div class="audit-issue-title" style="color:#00e676;">✓ Schemi identici</div>
+      <div class="audit-issue-desc">Nessuna differenza trovata rispetto al file JSON selezionato.</div>
+    </div>`;
+  } else {
+    for (const t of addedTables) {
+      html += `<div class="audit-issue-item" style="border-left-color:#00e676;">
+        <div class="audit-issue-title"><span class="diff-tag diff-added">+ TABELLA AGGIUNTA</span> ${esc(t)}</div>
+      </div>`;
+    }
+    for (const t of removedTables) {
+      html += `<div class="audit-issue-item" style="border-left-color:#e5534b;">
+        <div class="audit-issue-title"><span class="diff-tag diff-removed">- TABELLA RIMOSSA</span> ${esc(t)}</div>
+      </div>`;
+    }
+    for (const m of modifiedTables) {
+      html += `<div class="audit-issue-item" style="border-left-color:#f5a623;">
+        <div class="audit-issue-title"><span class="diff-tag diff-changed">~ TABELLA MODIFICATA</span> ${esc(m.name)}</div>
+        <div class="audit-issue-desc">
+          ${m.addedFields.length ? `<span style="color:#00e676;">+ Campi aggiunti: ${m.addedFields.join(', ')}</span><br/>` : ''}
+          ${m.removedFields.length ? `<span style="color:#e5534b;">- Campi rimossi: ${m.removedFields.join(', ')}</span>` : ''}
+        </div>
+      </div>`;
+    }
+  }
+
+  const diffContent = $('#diff-content');
+  if (diffContent) {
+    diffContent.innerHTML = html;
+  }
+}
+
+// 4. Parser DDL SQL & DBML Standalone
+function parseSchemaInput(text, format) {
+  const collections = [];
+  const relations = [];
+
+  if (format === 'dbml') {
+    const tableRegex = /Table\s+["']?([a-zA-Z0-9_]+)["']?\s*\{([^}]+)\}/gi;
+    let match;
+    while ((match = tableRegex.exec(text)) !== null) {
+      const tableName = match[1];
+      const body = match[2];
+      const fields = [];
+      const lines = body.split('\n');
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('//')) continue;
+        const parts = trimmed.split(/\s+/);
+        if (parts.length >= 1) {
+          const fName = parts[0].replace(/["']/g, '');
+          const fType = parts[1] || 'varchar';
+          const isPk = trimmed.includes('[pk]');
+          fields.push({ name: fName, types: [fType], pk: isPk });
+        }
+      }
+      collections.push({ name: tableName, fields });
+    }
+
+    const refRegex = /Ref:\s*["']?([a-zA-Z0-9_]+)["']?\."?([a-zA-Z0-9_]+)"?\s*>\s*["']?([a-zA-Z0-9_]+)["']?\."?([a-zA-Z0-9_]+)"?/gi;
+    let refMatch;
+    while ((refMatch = refRegex.exec(text)) !== null) {
+      relations.push({
+        from: refMatch[1],
+        field: refMatch[2],
+        to: refMatch[3],
+        many: true,
+      });
+    }
+  } else {
+    // SQL DDL Parser
+    const tableRegex = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?([a-zA-Z0-9_]+)`?\s*\(([^;]+)\);/gi;
+    let match;
+    while ((match = tableRegex.exec(text)) !== null) {
+      const tableName = match[1];
+      const body = match[2];
+      const fields = [];
+      const lines = body.split('\n');
+      for (const line of lines) {
+        const trimmed = line.trim().replace(/,$/, '');
+        if (!trimmed || trimmed.startsWith('--') || trimmed.toUpperCase().startsWith('PRIMARY KEY') || trimmed.toUpperCase().startsWith('CONSTRAINT')) continue;
+        const parts = trimmed.split(/\s+/);
+        if (parts.length >= 1) {
+          const fName = parts[0].replace(/`/g, '');
+          const fType = parts[1] || 'VARCHAR';
+          const isPk = trimmed.toUpperCase().includes('PRIMARY KEY');
+          fields.push({ name: fName, types: [fType], pk: isPk });
+        }
+      }
+      collections.push({ name: tableName, fields });
+    }
+
+    const fkRegex = /FOREIGN\s+KEY\s*\(`?([a-zA-Z0-9_]+)`?\)\s*REFERENCES\s*`?([a-zA-Z0-9_]+)`?\s*\(`?([a-zA-Z0-9_]+)`?\)/gi;
+    let fkMatch;
+    while ((fkMatch = fkRegex.exec(text)) !== null) {
+      relations.push({
+        from: 'imported',
+        field: fkMatch[1],
+        to: fkMatch[2],
+        many: true,
+      });
+    }
+  }
+
+  return { collections, relations };
+}
+
 function sanitizeName(str) {
   if (!str) return 'entity';
   return String(str).replace(/[^a-zA-Z0-9_]/g, '_');
@@ -427,7 +728,6 @@ function createTextTexture(text) {
 }
 
 export function initGraph3d() {
-  // Ricerca Avanzata per Nome Tabella e per Nome Campo
   const searchInput = $('#graph3d-search');
   if (searchInput) {
     searchInput.addEventListener('input', (e) => {
@@ -435,7 +735,6 @@ export function initGraph3d() {
       const schema = state.dbSchema || currentSchemaData;
       if (!currentSearchQuery || !graphInstance || !schema) return;
 
-      // Cerca prima per nome tabella, altrimenti per nome campo contenuto
       let targetNode = graphInstance.graphData().nodes.find((n) => n.name.toLowerCase().includes(currentSearchQuery));
       if (!targetNode) {
         targetNode = graphInstance.graphData().nodes.find((n) =>
@@ -457,19 +756,32 @@ export function initGraph3d() {
     });
   }
 
-  // Cambio Modalità Colori (Prefisso vs Centralità)
   const colorSelect = $('#graph3d-color-mode');
-  if (colorSelect) {
-    colorSelect.addEventListener('change', () => renderGraph3d());
-  }
+  if (colorSelect) colorSelect.addEventListener('change', () => renderGraph3d());
 
-  // Cambio Filtro Hop (1° Livello, 2° Livello, Tutti)
   const hopSelect = $('#graph3d-hop-filter');
-  if (hopSelect) {
-    hopSelect.addEventListener('change', () => renderGraph3d());
+  if (hopSelect) hopSelect.addEventListener('change', () => renderGraph3d());
+
+  const implicitBtn = $('#graph3d-toggle-implicit');
+  if (implicitBtn) {
+    implicitBtn.addEventListener('click', () => {
+      showImplicitRelations = !showImplicitRelations;
+      implicitBtn.classList.toggle('active', showImplicitRelations);
+      renderGraph3d();
+      notify(showImplicitRelations ? 'Relazioni implicite visibili' : 'Relazioni implicite nascoste');
+    });
   }
 
-  // Auto-Rotate 3D Presentation Mode
+  const toggle2dBtn = $('#graph3d-toggle-2d');
+  if (toggle2dBtn) {
+    toggle2dBtn.addEventListener('click', () => {
+      is2DMode = !is2DMode;
+      toggle2dBtn.classList.toggle('active', is2DMode);
+      renderGraph3d();
+      notify(is2DMode ? 'Modalità 2D Piatta attivata' : 'Modalità 3D attivata');
+    });
+  }
+
   const autoRotateBtn = $('#graph3d-auto-rotate');
   if (autoRotateBtn) {
     autoRotateBtn.addEventListener('click', () => {
@@ -480,6 +792,78 @@ export function initGraph3d() {
         graphInstance.controls().autoRotateSpeed = 1.5;
       }
       notify(autoRotateActive ? 'Modalità Auto-Rotate 3D attivata' : 'Auto-Rotate disattivata');
+    });
+  }
+
+  const auditBtn = $('#graph3d-audit');
+  if (auditBtn) auditBtn.addEventListener('click', () => runSchemaAudit());
+  const auditCloseBtn = $('#audit-modal-close');
+  if (auditCloseBtn) auditCloseBtn.addEventListener('click', () => $('#audit-modal').classList.add('hidden'));
+
+  // Salva Snapshot locale (.json file download)
+  const saveSnapBtn = $('#graph3d-save-snapshot');
+  if (saveSnapBtn) saveSnapBtn.addEventListener('click', () => saveSchemaSnapshotLocal());
+
+  // Diff con caricamento file .json locale
+  const diffBtn = $('#graph3d-diff');
+  if (diffBtn) {
+    diffBtn.addEventListener('click', () => {
+      const diffContent = $('#diff-content');
+      if (diffContent) {
+        diffContent.innerHTML = '<div style="color:var(--fg-dim,#8b949e);">Seleziona un file snapshot JSON salvato in precedenza per visualizzare il report delle modifiche.</div>';
+      }
+      $('#diff-modal').classList.remove('hidden');
+    });
+  }
+
+  const diffFileInput = $('#diff-file-input');
+  if (diffFileInput) {
+    diffFileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        try {
+          const snapshot = JSON.parse(evt.target.result);
+          renderDiffReport(snapshot);
+        } catch (err) {
+          notify('Impossibile leggere il file JSON: ' + err.message);
+        }
+      };
+      reader.readAsText(file);
+    });
+  }
+
+  const diffCloseBtn = $('#diff-modal-close');
+  if (diffCloseBtn) diffCloseBtn.addEventListener('click', () => $('#diff-modal').classList.add('hidden'));
+
+  const importBtn = $('#graph3d-import-schema');
+  if (importBtn) {
+    importBtn.addEventListener('click', () => $('#import-schema-modal').classList.remove('hidden'));
+  }
+  const importCloseBtn = $('#import-schema-close');
+  if (importCloseBtn) {
+    importCloseBtn.addEventListener('click', () => $('#import-schema-modal').classList.add('hidden'));
+  }
+  const importRenderBtn = $('#import-schema-render');
+  if (importRenderBtn) {
+    importRenderBtn.addEventListener('click', () => {
+      const textarea = $('#import-schema-textarea');
+      const format = $('#import-schema-format').value;
+      if (!textarea || !textarea.value.trim()) {
+        notify('Incolla uno script SQL o DBML valido.');
+        return;
+      }
+      const parsed = parseSchemaInput(textarea.value, format);
+      if (!parsed.collections.length) {
+        notify('Impossibile interpretare lo schema fornito.');
+        return;
+      }
+      state.dbSchema = parsed;
+      state.dbSchemaFor = 'imported';
+      $('#import-schema-modal').classList.add('hidden');
+      renderGraph3d();
+      notify(`Schema importato (${parsed.collections.length} tabelle visualizzate)!`);
     });
   }
 
@@ -511,7 +895,6 @@ export function initGraph3d() {
     refreshBtn.addEventListener('click', () => loadGraph3d(true));
   }
 
-  // Export PNG
   const exportPngBtn = $('#graph3d-export-png');
   if (exportPngBtn) {
     exportPngBtn.addEventListener('click', () => {
@@ -536,7 +919,6 @@ export function initGraph3d() {
     });
   }
 
-  // Export Mermaid
   const exportMermaidBtn = $('#graph3d-export-mermaid');
   if (exportMermaidBtn) {
     exportMermaidBtn.addEventListener('click', () => {
@@ -556,9 +938,7 @@ export function initGraph3d() {
 
   const mermaidCloseBtn = $('#mermaid-modal-close');
   if (mermaidCloseBtn) {
-    mermaidCloseBtn.addEventListener('click', () => {
-      $('#mermaid-modal').classList.add('hidden');
-    });
+    mermaidCloseBtn.addEventListener('click', () => $('#mermaid-modal').classList.add('hidden'));
   }
 
   const mermaidCopyBtn = $('#mermaid-modal-copy');
@@ -576,7 +956,6 @@ export function initGraph3d() {
     });
   }
 
-  // Export DBML
   const exportDbmlBtn = $('#graph3d-export-dbml');
   if (exportDbmlBtn) {
     exportDbmlBtn.addEventListener('click', () => {
@@ -596,9 +975,7 @@ export function initGraph3d() {
 
   const dbmlCloseBtn = $('#dbml-modal-close');
   if (dbmlCloseBtn) {
-    dbmlCloseBtn.addEventListener('click', () => {
-      $('#dbml-modal').classList.add('hidden');
-    });
+    dbmlCloseBtn.addEventListener('click', () => $('#dbml-modal').classList.add('hidden'));
   }
 
   const dbmlCopyBtn = $('#dbml-modal-copy');
@@ -616,7 +993,6 @@ export function initGraph3d() {
     });
   }
 
-  // Export SQL DDL
   const exportSqlBtn = $('#graph3d-export-sql');
   if (exportSqlBtn) {
     exportSqlBtn.addEventListener('click', () => {
@@ -636,9 +1012,7 @@ export function initGraph3d() {
 
   const sqlCloseBtn = $('#sql-modal-close');
   if (sqlCloseBtn) {
-    sqlCloseBtn.addEventListener('click', () => {
-      $('#sql-modal').classList.add('hidden');
-    });
+    sqlCloseBtn.addEventListener('click', () => $('#sql-modal').classList.add('hidden'));
   }
 
   const sqlCopyBtn = $('#sql-modal-copy');

@@ -2,7 +2,7 @@
 <html lang="it">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>CodeDB</title>
   <meta name="theme-color" content="#1e1e2e" />
   <link rel="manifest" href="manifest.json" />
@@ -325,8 +325,14 @@
                 <option value="1">1° Livello</option>
                 <option value="2">2° Livello</option>
               </select>
+              <button id="graph3d-toggle-implicit" class="ghost" title="Mostra/Nascondi relazioni implicite euristiche">💡 Implicite</button>
+              <button id="graph3d-toggle-2d" class="ghost" title="Alterna tra vista 3D e vista 2D piatta">📐 Vista 2D</button>
               <button id="graph3d-auto-rotate" class="ghost" title="Attiva/Disattiva rotazione automatica 3D">🔄 Auto-Rotate</button>
               <button id="graph3d-reset-cam" class="ghost" title="Reset Vista 3D">🎥 Reset Camera</button>
+              <button id="graph3d-audit" class="ghost" title="Esegui diagnostica dello schema (Health Check)">🩺 Audit Schema</button>
+              <button id="graph3d-save-snapshot" class="ghost" title="Salva uno snapshot dello schema corrente">💾 Snapshot</button>
+              <button id="graph3d-diff" class="ghost" title="Confronta lo schema attivo con lo snapshot salvato">⚖️ Diff</button>
+              <button id="graph3d-import-schema" class="ghost" title="Importa ed esplora uno schema da SQL o DBML">📥 Importa</button>
               <button id="graph3d-export-png" class="ghost" title="Esporta PNG">📷 PNG</button>
               <button id="graph3d-export-mermaid" class="ghost" title="Copia diagramma Mermaid">📝 Mermaid</button>
               <button id="graph3d-export-dbml" class="ghost" title="Esporta in formato DBML">💎 DBML</button>
@@ -629,6 +635,55 @@
       <div class="modal-actions">
         <button id="sql-modal-close" class="ghost">Chiudi</button>
         <button id="sql-modal-copy" class="primary">📋 Copia negli appunti</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== Modale Audit Schema (Health Check) ===================== -->
+  <div id="audit-modal" class="overlay hidden">
+    <div class="modal wide">
+      <h2>🩺 Diagnostica dello Schema (Health Check)</h2>
+      <div id="audit-content" style="max-height: 420px; overflow-y: auto; padding: 10px 0;"></div>
+      <div class="modal-actions">
+        <button id="audit-modal-close" class="primary">Chiudi</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== Modale Schema Diff ===================== -->
+  <div id="diff-modal" class="overlay hidden">
+    <div class="modal wide">
+      <h2>⚖️ Schema Diff (Confronto con File Locale JSON)</h2>
+      <div class="form-row" style="margin-bottom: 12px;">
+        <label>Seleziona File Snapshot JSON locale:
+          <input type="file" id="diff-file-input" accept=".json" style="padding: 4px; margin-top: 4px;" />
+        </label>
+      </div>
+      <div id="diff-content" style="max-height: 420px; overflow-y: auto; padding: 10px 0;"></div>
+      <div class="modal-actions">
+        <button id="diff-modal-close" class="primary">Chiudi</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== Modale Importazione Schema Standalone ===================== -->
+  <div id="import-schema-modal" class="overlay hidden">
+    <div class="modal wide">
+      <h2>📥 Importa ed Esplora Schema (SQL DDL / DBML)</h2>
+      <div class="form-row">
+        <label>Format
+          <select id="import-schema-format">
+            <option value="sql">SQL DDL (CREATE TABLE ...)</option>
+            <option value="dbml">DBML (Table name { ... })</option>
+          </select>
+        </label>
+      </div>
+      <div class="form-row">
+        <textarea id="import-schema-textarea" rows="10" placeholder="Incolla qui lo script SQL o DBML per generare il Grafo 3D..." spellcheck="false" style="width:100%; font-family:monospace; font-size:12px; background:var(--bg-1,#131518); color:var(--fg,#e1e4e8); padding:10px; border-radius:6px; border:1px solid var(--border,#2a2e35); resize:vertical;"></textarea>
+      </div>
+      <div class="modal-actions">
+        <button id="import-schema-close" class="ghost">Annulla</button>
+        <button id="import-schema-render" class="primary">🌐 Genera Grafo 3D</button>
       </div>
     </div>
   </div>
