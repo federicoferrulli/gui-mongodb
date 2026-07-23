@@ -5,6 +5,10 @@ import { setView } from './main.js';
 
 let graphInstance = null;
 let currentSchemaData = null;
+let selectedNodeId = null;
+let autoRotateActive = false;
+let autoRotateAnimId = null;
+let currentSearchQuery = '';
 
 export function loadGraph3d(force) {
   if (!state.db) return;
@@ -40,42 +44,103 @@ export function renderGraph3d() {
   currentSchemaData = schema;
   canvas.innerHTML = '';
 
-  const nodes = schema.collections.map((c) => ({
-    id: c.name,
-    name: c.name,
-    fieldCount: (c.fields && c.fields.length) || 0,
-    val: Math.max(3, Math.min(15, (c.fields && c.fields.length) || 5)),
-  }));
+  const colorMode = ($('#graph3d-color-mode') && $('#graph3d-color-mode').value) || 'prefix';
+  const hopFilter = ($('#graph3d-hop-filter') && $('#graph3d-hop-filter').value) || 'all';
 
-  const edges = (schema.relations || []).map((r) => ({
-    source: r.from,
-    target: r.to,
-    label: r.field,
-    many: r.many,
-  }));
+  // Calcolo delle adiacenze (grado) e mappa dei vicini
+  const neighborsMap = new Map();
+  const degreeMap = new Map();
+  for (const c of schema.collections) {
+    neighborsMap.set(c.name, new Set());
+    degreeMap.set(c.name, 0);
+  }
+  for (const r of schema.relations || []) {
+    if (neighborsMap.has(r.from)) neighborsMap.get(r.from).add(r.to);
+    if (neighborsMap.has(r.to)) neighborsMap.get(r.to).add(r.from);
+    degreeMap.set(r.from, (degreeMap.get(r.from) || 0) + 1);
+    degreeMap.set(r.to, (degreeMap.get(r.to) || 0) + 1);
+  }
+
+  // Seleziona nodi entro N hop se un nodo è selezionato e hopFilter != 'all'
+  let activeNodesSet = null;
+  if (selectedNodeId && hopFilter !== 'all') {
+    const maxHops = parseInt(hopFilter, 10) || 1;
+    activeNodesSet = getNodesWithinHops(selectedNodeId, maxHops, neighborsMap);
+  }
+
+  const nodes = schema.collections
+    .filter((c) => !activeNodesSet || activeNodesSet.has(c.name))
+    .map((c) => {
+      const degree = degreeMap.get(c.name) || 0;
+      let val = 5;
+      if (colorMode === 'degree') {
+        val = Math.max(4, Math.min(22, 4 + degree * 3.5));
+      } else {
+        val = Math.max(3, Math.min(15, (c.fields && c.fields.length) || 5));
+      }
+      return {
+        id: c.name,
+        name: c.name,
+        degree,
+        fieldCount: (c.fields && c.fields.length) || 0,
+        fields: c.fields || [],
+        val,
+      };
+    });
+
+  const nodeIdsSet = new Set(nodes.map((n) => n.id));
+  const edges = (schema.relations || [])
+    .filter((r) => nodeIdsSet.has(r.from) && nodeIdsSet.has(r.to))
+    .map((r) => ({
+      source: r.from,
+      target: r.to,
+      label: r.field,
+      many: r.many,
+    }));
 
   const graphData = { nodes, links: edges };
-
-  const colors = ['#4a9eff', '#50e3c2', '#f5a623', '#b8e986', '#bd10e0', '#9013fe', '#e65100'];
 
   if (typeof ForceGraph3D === 'undefined') {
     canvas.innerHTML = '<div class="error" style="padding:20px;">Libreria 3D Force Graph non disponibile.</div>';
     return;
   }
 
-  // preserveDrawingBuffer per consentire a toDataURL() l'export in PNG
+  const prefixColors = ['#4a9eff', '#50e3c2', '#f5a623', '#b8e986', '#bd10e0', '#9013fe', '#e65100', '#ff4081', '#00e676'];
+
   graphInstance = ForceGraph3D({ preserveDrawingBuffer: true })(canvas)
     .graphData(graphData)
     .nodeId('id')
-    .nodeLabel((node) => `<div style="background:rgba(15,20,28,0.9); padding:6px 10px; border-radius:4px; border:1px solid #4a9eff; font-family:sans-serif; color:#fff;"><b>${esc(node.name)}</b><br/><small style="color:#aaa;">${node.fieldCount} campi</small></div>`)
-    .nodeColor((node) => colors[Math.abs(hashString(node.name)) % colors.length])
+    .nodeLabel((node) => `<div style="background:rgba(15,20,28,0.95); padding:8px 12px; border-radius:6px; border:1px solid #4a9eff; font-family:sans-serif; color:#fff; font-size:12px;"><b>${esc(node.name)}</b><br/><small style="color:#aaa;">${node.fieldCount} campi • ${node.degree} relazioni</small></div>`)
+    .nodeColor((node) => {
+      // Dimming per nodi non selezionati/non collegati
+      if (selectedNodeId && selectedNodeId !== node.id && !isNeighbor(selectedNodeId, node.id, neighborsMap)) {
+        return 'rgba(50, 55, 65, 0.25)';
+      }
+      if (colorMode === 'degree') {
+        return getDegreeColor(node.degree);
+      }
+      const prefix = getTablePrefix(node.name);
+      return prefixColors[Math.abs(hashString(prefix)) % prefixColors.length];
+    })
     .nodeRelSize(4)
     .linkDirectionalParticles(2)
     .linkDirectionalParticleSpeed(0.006)
     .linkLabel((link) => `<span style="color:#aaa;">${esc(link.label)}${link.many ? ' [N]' : ''}</span>`)
-    .linkColor(() => '#4a9eff')
-    .linkWidth(1.5)
+    .linkColor((link) => {
+      const srcId = typeof link.source === 'object' ? link.source.id : link.source;
+      const tgtId = typeof link.target === 'object' ? link.target.id : link.target;
+      if (selectedNodeId && srcId !== selectedNodeId && tgtId !== selectedNodeId) {
+        return 'rgba(40, 45, 55, 0.15)';
+      }
+      return '#4a9eff';
+    })
+    .linkWidth((link) => {
+      const srcId = typeof link.source === 'object' ? link.source.id : link.source;
+      const tgtId = typeof link.target === 'object' ? link.target.id : link.target;
+      return selectedNodeId && (srcId === selectedNodeId || tgtId === selectedNodeId) ? 2.8 : 1.2;
+    })
     .onNodeClick((node) => {
+      selectedNodeId = node.id;
       const distance = 120;
       const distRatio = 1 + distance / Math.hypot(node.x, node.y, node.z || 1);
       graphInstance.cameraPosition(
@@ -84,7 +149,9 @@ export function renderGraph3d() {
         1200
       );
 
-      showTableDetailsPanel(node.name);
+      showTableDetailsPanel(node.name, currentSearchQuery);
+      // Aggiorna gli stili di dimming e ampiezza archi
+      graphInstance.nodeColor(graphInstance.nodeColor()).linkWidth(graphInstance.linkWidth());
     });
 
   if (typeof THREE !== 'undefined') {
@@ -95,11 +162,17 @@ export function renderGraph3d() {
           depthTest: false,
         })
       );
-      sprite.scale.set(35, 18, 1);
+      sprite.scale.set(36, 18, 1);
       sprite.position.y = 12;
       return sprite;
     });
     graphInstance.nodeThreeObjectExtend(true);
+  }
+
+  // Ripristina l'auto-rotate se attivo
+  if (autoRotateActive && graphInstance.controls()) {
+    graphInstance.controls().autoRotate = true;
+    graphInstance.controls().autoRotateSpeed = 1.5;
   }
 
   const resizeObserver = new ResizeObserver(() => {
@@ -111,7 +184,46 @@ export function renderGraph3d() {
   resizeObserver.observe(canvas);
 }
 
-function showTableDetailsPanel(tableName) {
+function getTablePrefix(name) {
+  const parts = name.split('_');
+  return parts.length > 1 ? parts[0] : name;
+}
+
+function getDegreeColor(degree) {
+  if (degree <= 1) return '#4a9eff'; // Blu tenue
+  if (degree <= 3) return '#50e3c2'; // Turchese
+  if (degree <= 5) return '#f5a623'; // Arancione
+  return '#e5534b'; // Rosso brillante per nodi hub centrati
+}
+
+function isNeighbor(id1, id2, map) {
+  const set = map.get(id1);
+  return set ? set.has(id2) : false;
+}
+
+function getNodesWithinHops(startId, maxHops, map) {
+  const result = new Set([startId]);
+  let currentLevel = new Set([startId]);
+
+  for (let hop = 0; hop < maxHops; hop++) {
+    const nextLevel = new Set();
+    for (const nodeId of currentLevel) {
+      const neighbors = map.get(nodeId);
+      if (neighbors) {
+        for (const n of neighbors) {
+          if (!result.has(n)) {
+            result.add(n);
+            nextLevel.add(n);
+          }
+        }
+      }
+    }
+    currentLevel = nextLevel;
+  }
+  return result;
+}
+
+function showTableDetailsPanel(tableName, highlightQuery) {
   const panel = $('#graph3d-side-panel');
   const title = $('#graph3d-panel-title');
   const content = $('#graph3d-panel-content');
@@ -131,8 +243,11 @@ function showTableDetailsPanel(tableName) {
   for (const f of collection.fields) {
     const isPk = f.pk || f.name === '_id';
     const typeStr = (f.types || []).join(' | ') || 'any';
-    html += `<li>
-      <span class="field-name">${esc(f.name)}</span>
+    const isMatched = highlightQuery && f.name.toLowerCase().includes(highlightQuery.toLowerCase());
+    const highlightStyle = isMatched ? 'style="background: rgba(74, 158, 255, 0.25); border: 1px solid #4a9eff;"' : '';
+
+    html += `<li ${highlightStyle}>
+      <span class="field-name">${esc(f.name)} ${isMatched ? '🔍' : ''}</span>
       <span>
         ${isPk ? '<span class="field-badge pk">PK</span> ' : ''}
         <span class="field-badge">${esc(typeStr)}</span>
@@ -169,6 +284,7 @@ function showTableDetailsPanel(tableName) {
   content.querySelectorAll('[data-jump-node]').forEach((el) => {
     el.addEventListener('click', () => {
       const targetName = el.dataset.jumpNode;
+      selectedNodeId = targetName;
       if (!graphInstance) return;
       const targetNode = graphInstance.graphData().nodes.find((n) => n.name === targetName);
       if (targetNode && targetNode.x != null) {
@@ -179,7 +295,7 @@ function showTableDetailsPanel(tableName) {
           { x: targetNode.x, y: targetNode.y, z: targetNode.z || 0 },
           1200
         );
-        showTableDetailsPanel(targetName);
+        showTableDetailsPanel(targetName, currentSearchQuery);
       }
     });
   });
@@ -205,7 +321,7 @@ function showTableDetailsPanel(tableName) {
   }
 }
 
-function sanitizeMermaid(str) {
+function sanitizeName(str) {
   if (!str) return 'entity';
   return String(str).replace(/[^a-zA-Z0-9_]/g, '_');
 }
@@ -215,20 +331,60 @@ function buildMermaidDiagram() {
   if (!schema || !schema.collections || !schema.collections.length) return '';
   let lines = ['erDiagram'];
   for (const c of schema.collections) {
-    const cName = sanitizeMermaid(c.name);
+    const cName = sanitizeName(c.name);
     lines.push(`    ${cName} {`);
     for (const f of c.fields || []) {
-      const typeStr = (f.types && f.types[0]) ? sanitizeMermaid(f.types[0]) : 'string';
-      const fName = sanitizeMermaid(f.name);
+      const typeStr = (f.types && f.types[0]) ? sanitizeName(f.types[0]) : 'string';
+      const fName = sanitizeName(f.name);
       lines.push(`        ${typeStr} ${fName}`);
     }
     lines.push('    }');
   }
   for (const r of schema.relations || []) {
-    const fromName = sanitizeMermaid(r.from);
-    const toName = sanitizeMermaid(r.to);
-    const fieldName = sanitizeMermaid(r.field);
+    const fromName = sanitizeName(r.from);
+    const toName = sanitizeName(r.to);
+    const fieldName = sanitizeName(r.field);
     lines.push(`    ${fromName} ||--o{ ${toName} : "${fieldName}"`);
+  }
+  return lines.join('\n');
+}
+
+function buildDbmlDiagram() {
+  const schema = state.dbSchema || currentSchemaData;
+  if (!schema || !schema.collections || !schema.collections.length) return '';
+  let lines = [`// Database Markup Language (DBML) per dbdiagram.io`, `Project "${state.db || 'database'}" {`, `  database_type: '${state.dbType || 'MySQL'}'`, `}`, ''];
+  for (const c of schema.collections) {
+    lines.push(`Table "${c.name}" {`);
+    for (const f of c.fields || []) {
+      const typeStr = (f.types && f.types[0]) ? f.types[0] : 'varchar';
+      const isPk = f.pk || f.name === '_id';
+      lines.push(`  "${f.name}" ${typeStr}${isPk ? ' [pk]' : ''}`);
+    }
+    lines.push('}\n');
+  }
+  for (const r of schema.relations || []) {
+    lines.push(`Ref: "${r.from}"."${r.field}" > "${r.to}"."_id"`);
+  }
+  return lines.join('\n');
+}
+
+function buildSqlDdl() {
+  const schema = state.dbSchema || currentSchemaData;
+  if (!schema || !schema.collections || !schema.collections.length) return '';
+  let lines = [`-- Script DDL generato per database ${state.db || 'db'}`, ''];
+  for (const c of schema.collections) {
+    lines.push(`CREATE TABLE \`${c.name}\` (`);
+    const colDefs = [];
+    for (const f of c.fields || []) {
+      const isPk = f.pk || f.name === '_id';
+      const type = (f.types && f.types[0]) ? f.types[0].toUpperCase() : 'VARCHAR(255)';
+      colDefs.push(`  \`${f.name}\` ${type}${isPk ? ' NOT NULL PRIMARY KEY' : ''}`);
+    }
+    lines.push(colDefs.join(',\n'));
+    lines.push(');\n');
+  }
+  for (const r of schema.relations || []) {
+    lines.push(`ALTER TABLE \`${r.from}\` ADD CONSTRAINT \`fk_${r.from}_${r.field}\` FOREIGN KEY (\`${r.field}\`) REFERENCES \`${r.to}\` (\`id\`);`);
   }
   return lines.join('\n');
 }
@@ -271,14 +427,24 @@ function createTextTexture(text) {
 }
 
 export function initGraph3d() {
+  // Ricerca Avanzata per Nome Tabella e per Nome Campo
   const searchInput = $('#graph3d-search');
   if (searchInput) {
     searchInput.addEventListener('input', (e) => {
-      const query = e.target.value.trim().toLowerCase();
+      currentSearchQuery = e.target.value.trim().toLowerCase();
       const schema = state.dbSchema || currentSchemaData;
-      if (!query || !graphInstance || !schema) return;
-      const targetNode = graphInstance.graphData().nodes.find((n) => n.name.toLowerCase().includes(query));
+      if (!currentSearchQuery || !graphInstance || !schema) return;
+
+      // Cerca prima per nome tabella, altrimenti per nome campo contenuto
+      let targetNode = graphInstance.graphData().nodes.find((n) => n.name.toLowerCase().includes(currentSearchQuery));
+      if (!targetNode) {
+        targetNode = graphInstance.graphData().nodes.find((n) =>
+          (n.fields || []).some((f) => f.name.toLowerCase().includes(currentSearchQuery))
+        );
+      }
+
       if (targetNode && targetNode.x != null) {
+        selectedNodeId = targetNode.id;
         const distance = 100;
         const distRatio = 1 + distance / Math.hypot(targetNode.x, targetNode.y, targetNode.z || 1);
         graphInstance.cameraPosition(
@@ -286,8 +452,34 @@ export function initGraph3d() {
           { x: targetNode.x, y: targetNode.y, z: targetNode.z || 0 },
           1200
         );
-        showTableDetailsPanel(targetNode.name);
+        showTableDetailsPanel(targetNode.name, currentSearchQuery);
       }
+    });
+  }
+
+  // Cambio Modalità Colori (Prefisso vs Centralità)
+  const colorSelect = $('#graph3d-color-mode');
+  if (colorSelect) {
+    colorSelect.addEventListener('change', () => renderGraph3d());
+  }
+
+  // Cambio Filtro Hop (1° Livello, 2° Livello, Tutti)
+  const hopSelect = $('#graph3d-hop-filter');
+  if (hopSelect) {
+    hopSelect.addEventListener('change', () => renderGraph3d());
+  }
+
+  // Auto-Rotate 3D Presentation Mode
+  const autoRotateBtn = $('#graph3d-auto-rotate');
+  if (autoRotateBtn) {
+    autoRotateBtn.addEventListener('click', () => {
+      autoRotateActive = !autoRotateActive;
+      autoRotateBtn.classList.toggle('active', autoRotateActive);
+      if (graphInstance && graphInstance.controls()) {
+        graphInstance.controls().autoRotate = autoRotateActive;
+        graphInstance.controls().autoRotateSpeed = 1.5;
+      }
+      notify(autoRotateActive ? 'Modalità Auto-Rotate 3D attivata' : 'Auto-Rotate disattivata');
     });
   }
 
@@ -296,14 +488,20 @@ export function initGraph3d() {
     closePanelBtn.addEventListener('click', () => {
       const panel = $('#graph3d-side-panel');
       if (panel) panel.classList.add('hidden');
+      selectedNodeId = null;
+      if (graphInstance) {
+        graphInstance.nodeColor(graphInstance.nodeColor()).linkWidth(graphInstance.linkWidth());
+      }
     });
   }
 
   const resetBtn = $('#graph3d-reset-cam');
   if (resetBtn) {
     resetBtn.addEventListener('click', () => {
+      selectedNodeId = null;
       if (graphInstance) {
         graphInstance.zoomToFit(1000, 50);
+        graphInstance.nodeColor(graphInstance.nodeColor()).linkWidth(graphInstance.linkWidth());
       }
     });
   }
@@ -313,7 +511,7 @@ export function initGraph3d() {
     refreshBtn.addEventListener('click', () => loadGraph3d(true));
   }
 
-  // Export PNG corretto con re-render WebGL e trigger download
+  // Export PNG
   const exportPngBtn = $('#graph3d-export-png');
   if (exportPngBtn) {
     exportPngBtn.addEventListener('click', () => {
@@ -338,7 +536,7 @@ export function initGraph3d() {
     });
   }
 
-  // Export Mermaid corretto con modale dedicata
+  // Export Mermaid
   const exportMermaidBtn = $('#graph3d-export-mermaid');
   if (exportMermaidBtn) {
     exportMermaidBtn.addEventListener('click', () => {
@@ -359,8 +557,7 @@ export function initGraph3d() {
   const mermaidCloseBtn = $('#mermaid-modal-close');
   if (mermaidCloseBtn) {
     mermaidCloseBtn.addEventListener('click', () => {
-      const modal = $('#mermaid-modal');
-      if (modal) modal.classList.add('hidden');
+      $('#mermaid-modal').classList.add('hidden');
     });
   }
 
@@ -375,6 +572,86 @@ export function initGraph3d() {
       }).catch(() => {
         document.execCommand('copy');
         notify('Diagramma Mermaid copiato negli appunti!');
+      });
+    });
+  }
+
+  // Export DBML
+  const exportDbmlBtn = $('#graph3d-export-dbml');
+  if (exportDbmlBtn) {
+    exportDbmlBtn.addEventListener('click', () => {
+      const dbmlText = buildDbmlDiagram();
+      if (!dbmlText) {
+        notify('Nessun dato di schema disponibile per DBML.');
+        return;
+      }
+      const textarea = $('#dbml-textarea');
+      const modal = $('#dbml-modal');
+      if (textarea && modal) {
+        textarea.value = dbmlText;
+        modal.classList.remove('hidden');
+      }
+    });
+  }
+
+  const dbmlCloseBtn = $('#dbml-modal-close');
+  if (dbmlCloseBtn) {
+    dbmlCloseBtn.addEventListener('click', () => {
+      $('#dbml-modal').classList.add('hidden');
+    });
+  }
+
+  const dbmlCopyBtn = $('#dbml-modal-copy');
+  if (dbmlCopyBtn) {
+    dbmlCopyBtn.addEventListener('click', () => {
+      const textarea = $('#dbml-textarea');
+      if (!textarea) return;
+      textarea.select();
+      navigator.clipboard.writeText(textarea.value).then(() => {
+        notify('Schema DBML copiato negli appunti!');
+      }).catch(() => {
+        document.execCommand('copy');
+        notify('Schema DBML copiato negli appunti!');
+      });
+    });
+  }
+
+  // Export SQL DDL
+  const exportSqlBtn = $('#graph3d-export-sql');
+  if (exportSqlBtn) {
+    exportSqlBtn.addEventListener('click', () => {
+      const sqlText = buildSqlDdl();
+      if (!sqlText) {
+        notify('Nessun dato di schema disponibile per SQL DDL.');
+        return;
+      }
+      const textarea = $('#sql-textarea');
+      const modal = $('#sql-modal');
+      if (textarea && modal) {
+        textarea.value = sqlText;
+        modal.classList.remove('hidden');
+      }
+    });
+  }
+
+  const sqlCloseBtn = $('#sql-modal-close');
+  if (sqlCloseBtn) {
+    sqlCloseBtn.addEventListener('click', () => {
+      $('#sql-modal').classList.add('hidden');
+    });
+  }
+
+  const sqlCopyBtn = $('#sql-modal-copy');
+  if (sqlCopyBtn) {
+    sqlCopyBtn.addEventListener('click', () => {
+      const textarea = $('#sql-textarea');
+      if (!textarea) return;
+      textarea.select();
+      navigator.clipboard.writeText(textarea.value).then(() => {
+        notify('Script SQL DDL copiato negli appunti!');
+      }).catch(() => {
+        document.execCommand('copy');
+        notify('Script SQL DDL copiato negli appunti!');
       });
     });
   }

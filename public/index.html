@@ -315,10 +315,22 @@
           <!-- ------------------- Vista Grafo 3D ------------------- -->
           <div id="view-graph3d" class="view-panel hidden">
             <div class="graph3d-bar">
-              <input type="text" id="graph3d-search" placeholder="Cerca tabella..." autocomplete="off" spellcheck="false" />
+              <input type="text" id="graph3d-search" placeholder="Cerca tabella o campo..." autocomplete="off" spellcheck="false" title="Cerca nome tabella o nome colonna" />
+              <select id="graph3d-color-mode" title="Modalità di colorazione e dimensione nodi">
+                <option value="prefix">🎨 Colore: Prefisso</option>
+                <option value="degree">🔥 Colore: Centralità</option>
+              </select>
+              <select id="graph3d-hop-filter" title="Filtra vicini per livello di distanza dal nodo selezionato">
+                <option value="all">🔍 Mostra: Tutti</option>
+                <option value="1">1° Livello</option>
+                <option value="2">2° Livello</option>
+              </select>
+              <button id="graph3d-auto-rotate" class="ghost" title="Attiva/Disattiva rotazione automatica 3D">🔄 Auto-Rotate</button>
               <button id="graph3d-reset-cam" class="ghost" title="Reset Vista 3D">🎥 Reset Camera</button>
               <button id="graph3d-export-png" class="ghost" title="Esporta PNG">📷 PNG</button>
               <button id="graph3d-export-mermaid" class="ghost" title="Copia diagramma Mermaid">📝 Mermaid</button>
+              <button id="graph3d-export-dbml" class="ghost" title="Esporta in formato DBML">💎 DBML</button>
+              <button id="graph3d-export-sql" class="ghost" title="Esporta DDL SQL CREATE TABLE">🗄️ SQL DDL</button>
               <button id="graph3d-refresh" class="ghost" title="Rigenera Grafo">⟳ Rigenera</button>
             </div>
             <div class="graph3d-container">
@@ -589,6 +601,34 @@
       <div class="modal-actions">
         <button id="mermaid-modal-close" class="ghost">Chiudi</button>
         <button id="mermaid-modal-copy" class="primary">📋 Copia negli appunti</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== Modale Export DBML ===================== -->
+  <div id="dbml-modal" class="overlay hidden">
+    <div class="modal wide">
+      <h2>Schema DBML (dbdiagram.io)</h2>
+      <div class="form-row">
+        <textarea id="dbml-textarea" rows="12" spellcheck="false" readonly style="width:100%; font-family:monospace; font-size:12px; background:var(--bg-1,#131518); color:var(--fg,#e1e4e8); padding:10px; border-radius:6px; border:1px solid var(--border,#2a2e35); resize:vertical;"></textarea>
+      </div>
+      <div class="modal-actions">
+        <button id="dbml-modal-close" class="ghost">Chiudi</button>
+        <button id="dbml-modal-copy" class="primary">📋 Copia negli appunti</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== Modale Export SQL DDL ===================== -->
+  <div id="sql-modal" class="overlay hidden">
+    <div class="modal wide">
+      <h2>Schema SQL DDL (CREATE TABLE)</h2>
+      <div class="form-row">
+        <textarea id="sql-textarea" rows="12" spellcheck="false" readonly style="width:100%; font-family:monospace; font-size:12px; background:var(--bg-1,#131518); color:var(--fg,#e1e4e8); padding:10px; border-radius:6px; border:1px solid var(--border,#2a2e35); resize:vertical;"></textarea>
+      </div>
+      <div class="modal-actions">
+        <button id="sql-modal-close" class="ghost">Chiudi</button>
+        <button id="sql-modal-copy" class="primary">📋 Copia negli appunti</button>
       </div>
     </div>
   </div>

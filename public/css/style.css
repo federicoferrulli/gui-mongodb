@@ -1123,13 +1123,22 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   border-bottom: 1px solid var(--border, #2a2e35);
   z-index: 10;
 }
-.graph3d-bar input {
+.graph3d-bar input,
+.graph3d-bar select {
   padding: 5px 10px;
   border-radius: 4px;
   border: 1px solid var(--border, #2a2e35);
   background: var(--bg-1, #131518);
   color: var(--fg, #e1e4e8);
-  width: 200px;
+  font-size: 0.85rem;
+}
+.graph3d-bar input {
+  width: 210px;
+}
+.graph3d-bar button.active {
+  background: var(--accent, #4a9eff);
+  color: #fff;
+  border-color: var(--accent, #4a9eff);
 }
 .graph3d-container {
   display: flex;
