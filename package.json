@@ -8,6 +8,7 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "backup": "node backup/cli.js",
+    "test": "node test/unit.js",
     "shortcut": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/crea-collegamento.ps1",
     "shortcut-unix": "bash tools/crea-collegamento.sh"
   },

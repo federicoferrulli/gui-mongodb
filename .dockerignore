@@ -1,0 +1,11 @@
+node_modules
+npm-debug.log
+.git
+.agents
+.claude
+backups
+db/*.db
+connections.ini
+connections.ini.bak*
+codedb.log
+codedb.err.log

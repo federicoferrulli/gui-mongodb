@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  codedb:
+    build: .
+    ports:
+      - "3030:3030"
+    environment:
+      - PORT=3030
+      - HOST=0.0.0.0
+    depends_on:
+      - mongodb
+      - mysql
+    restart: unless-stopped
+
+  mongodb:
+    image: mongo:6.0
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_DATABASE=gui_mongodb_e2e
+    volumes:
+      - mongo_data:/data/db
+
+  mysql:
+    image: mysql:8.0
+    ports:
+      - "3306:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_DATABASE=codedb_e2e
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+volumes:
+  mongo_data:
+  mysql_data:
